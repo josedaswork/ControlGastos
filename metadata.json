@@ -1,0 +1,6 @@
+{
+  "name": "Control Gastos",
+  "description": "Aplicación de control de gastos personales y gestión presupuestaria conectada a Google Sheets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

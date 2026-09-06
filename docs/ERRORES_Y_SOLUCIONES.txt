@@ -1,0 +1,152 @@
+============================================================
+ ERRORES ENCONTRADOS Y SOLUCIONES — Control Gastos App
+============================================================
+
+────────────────────────────────────────────────────────────
+1. ICONO DE ANDROID NO SE ACTUALIZA (muestra el default)
+────────────────────────────────────────────────────────────
+
+PROBLEMA:
+  Al reemplazar los PNGs en mipmap-*, la app seguía mostrando
+  el icono verde de Android por defecto.
+
+CAUSA:
+  La carpeta mipmap-anydpi-v26/ contiene XMLs de "adaptive icon"
+  que en Android API 26+ tienen PRIORIDAD sobre los PNGs.
+  Si esos XMLs apuntan a recursos incorrectos o a sí mismos
+  (referencia circular), Android no puede resolver el icono
+  y muestra el default.
+
+  En nuestro caso, ic_launcher.xml tenía:
+    <foreground android:drawable="@mipmap/ic_launcher" />
+  Esto es una REFERENCIA CIRCULAR: ic_launcher → XML → ic_launcher → XML...
+
+SOLUCIÓN:
+  1. Generar archivos ic_launcher_foreground.png separados en cada
+     carpeta mipmap-* (icono centrado en fondo transparente, tamaño 108dp).
+  2. Los XMLs adaptativos deben apuntar a ic_launcher_foreground:
+       <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+  3. El background se define como color en colors.xml:
+       <color name="ic_launcher_background">#e0f2fe</color>
+
+ARCHIVOS AFECTADOS:
+  - generate-icons.mjs (genera los foreground PNGs)
+  - android/.../mipmap-anydpi-v26/ic_launcher.xml
+  - android/.../mipmap-anydpi-v26/ic_launcher_round.xml
+  - android/.../values/colors.xml
+
+LECCIÓN:
+  NUNCA borrar mipmap-anydpi-v26/ sin recrearla correctamente.
+  NUNCA apuntar foreground a @mipmap/ic_launcher (referencia circular).
+  Siempre usar un recurso _foreground separado.
+
+
+────────────────────────────────────────────────────────────
+2. FAVICON DE VITE (timer) APARECE EN VEZ DEL ICONO CUSTOM
+────────────────────────────────────────────────────────────
+
+PROBLEMA:
+  Tras borrar los iconos del proyecto, la web mostraba un icono
+  de timer/reloj (el favicon por defecto de Vite).
+
+CAUSA:
+  El index.html referenciaba archivos de icono que ya no existían:
+    <link rel="icon" href="/icon.svg" />
+  Al no encontrarlos, el navegador usaba el favicon cacheado de Vite.
+
+SOLUCIÓN:
+  1. Siempre regenerar los iconos ANTES de borrar los antiguos
+     (o inmediatamente después).
+  2. Añadir cache-buster a las URLs: href="/icon.svg?v=2"
+  3. Para forzar en el navegador: Ctrl+Shift+R (hard reload).
+
+LECCIÓN:
+  Usar ?v=N en las URLs de favicon para invalidar caché del navegador
+  cada vez que se cambie el icono.
+
+
+────────────────────────────────────────────────────────────
+3. CACHÉ DE ANDROID: ICONO NO CAMBIA TRAS REBUILD
+────────────────────────────────────────────────────────────
+
+PROBLEMA:
+  Incluso después de regenerar los PNGs y hacer cap sync,
+  el icono en Android seguía siendo el antiguo.
+
+CAUSA:
+  Android cachea los iconos del launcher agresivamente.
+  El build cache (android/app/build/) conserva recursos antiguos.
+
+SOLUCIÓN:
+  1. Borrar android/app/build/
+  2. Ejecutar: npx cap sync android
+  3. DESINSTALAR la app del dispositivo/emulador
+  4. Reinstalar desde Android Studio
+
+LECCIÓN:
+  Para cambios de icono en Android, SIEMPRE:
+  - Limpiar build cache
+  - Desinstalar la app del dispositivo antes de reinstalar
+
+
+────────────────────────────────────────────────────────────
+4. ESTRUCTURA DE ICONOS ANDROID — REFERENCIA RÁPIDA
+────────────────────────────────────────────────────────────
+
+Archivos necesarios por carpeta mipmap-*:
+  - ic_launcher.png          (icono legacy, cuadrado)
+  - ic_launcher_round.png    (icono legacy, redondo)
+  - ic_launcher_foreground.png (foreground para adaptive icon, fondo transparente)
+
+En mipmap-anydpi-v26/:
+  - ic_launcher.xml          (adaptive icon: background + foreground)
+  - ic_launcher_round.xml    (adaptive icon: background + foreground)
+
+Tamaños de foreground (108dp por densidad):
+  mdpi:    108x108
+  hdpi:    162x162
+  xhdpi:   216x216
+  xxhdpi:  324x324
+  xxxhdpi: 432x432
+
+El icono real dentro del foreground debe ocupar ~60% del canvas
+(zona segura interior) para que no se recorte.
+
+
+────────────────────────────────────────────────────────────
+5. DIST/ CONTIENE ARCHIVOS ANTIGUOS
+────────────────────────────────────────────────────────────
+
+PROBLEMA:
+  Tras borrar iconos de public/, quedaban copias antiguas en dist/.
+
+CAUSA:
+  dist/ es el output de "npm run build" y no se limpia automáticamente
+  al borrar archivos de public/.
+
+SOLUCIÓN:
+  Borrar dist/ manualmente o hacer npm run build de nuevo.
+
+LECCIÓN:
+  Al hacer cambios en public/, recordar que dist/ puede tener
+  copias antiguas. Hacer build limpio o borrar dist/.
+
+
+────────────────────────────────────────────────────────────
+6. GRADLEW NO EXISTE EN EL PROYECTO
+────────────────────────────────────────────────────────────
+
+PROBLEMA:
+  Al intentar ./gradlew clean, el comando no se encontró.
+
+CAUSA:
+  Capacitor no siempre genera el wrapper de Gradle.
+  El proyecto se compila desde Android Studio que usa su propio Gradle.
+
+SOLUCIÓN:
+  En vez de gradlew clean, borrar manualmente android/app/build/:
+    Remove-Item -Recurse -Force "android\app\build"
+
+LECCIÓN:
+  No asumir que gradlew existe. Usar borrado manual del build
+  o compilar desde Android Studio.
