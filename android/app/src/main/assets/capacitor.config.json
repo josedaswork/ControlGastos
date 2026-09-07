@@ -1,0 +1,8 @@
+{
+	"appId": "com.controlgastos.app",
+	"appName": "Control Gastos",
+	"webDir": "dist",
+	"server": {
+		"androidScheme": "https"
+	}
+}

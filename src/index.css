@@ -40,10 +40,11 @@
   }
   html {
     color-scheme: light;
-    background-color: hsl(var(--background));
+    background-color: #f8fafc;
   }
   body {
-    @apply bg-background text-foreground;
+    background-color: #f8fafc;
+    color: hsl(var(--foreground));
     -webkit-tap-highlight-color: transparent;
     overflow-x: hidden;
   }

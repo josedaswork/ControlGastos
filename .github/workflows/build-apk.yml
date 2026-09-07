@@ -2,8 +2,11 @@ name: Build APK
 
 on:
   push:
-    branches: [main, master]
+    branches: ['**']
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -36,19 +39,23 @@ jobs:
       - name: Build web app
         run: npm run build
 
-      - name: Sync Capacitor
-        run: npx cap sync android
-
-      - name: Generate Gradle wrapper
-        working-directory: android
-        run: gradle wrapper --gradle-version 8.2.1
+      - name: Sync Capacitor Android
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          else
+            npx cap sync android
+          fi
 
       - name: Build debug APK
         working-directory: android
-        run: chmod +x ./gradlew && ./gradlew assembleDebug
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: control-gastos-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
+

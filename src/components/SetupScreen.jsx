@@ -36,7 +36,12 @@ export default function SetupScreen({ onSave, onClose, initialUrl }) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4 bg-slate-50">
+    <div
+      className="flex min-h-screen items-center justify-center p-4 bg-slate-50"
+      style={{
+        paddingTop: 'max(calc(env(safe-area-inset-top, 0px) + 16px), 24px)',
+      }}
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}

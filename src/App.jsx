@@ -297,11 +297,16 @@ function App() {
   }
 
   return (
-    <div className="w-full min-h-screen bg-slate-100 flex justify-center">
+    <div className="w-full min-h-screen bg-slate-50 sm:bg-slate-100 flex justify-center">
       {/* Google Pixel 10 Phone Frame Container */}
       <div className="w-full max-w-md min-h-screen bg-slate-50 flex flex-col relative overflow-x-hidden shadow-sm">
-        {/* Top App Bar (Material 3 for Google Pixel) */}
-        <header className="px-4 pt-4 pb-2 flex items-center justify-between">
+        {/* Top App Bar con margen superior para no solaparse con la hora y barra de notificaciones */}
+        <header
+          className="px-4 pb-2 flex items-center justify-between bg-slate-50 shrink-0"
+          style={{
+            paddingTop: 'max(calc(env(safe-area-inset-top, 0px) + 10px), 36px)',
+          }}
+        >
           <div className="flex items-center gap-2.5">
             <motion.div
               whileHover={{ rotate: 8, scale: 1.05 }}
