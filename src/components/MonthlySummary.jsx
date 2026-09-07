@@ -1,9 +1,15 @@
 import { fmt } from '@/lib/utils'
-import { TrendingUp, Lock, ShoppingBag, Target, Wallet, Pencil } from 'lucide-react'
+import { TrendingUp, Lock, ShoppingBag, Target, Wallet, Pencil, CheckSquare } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 
-export default function MonthlySummary({ summary, loading, onEditIncome, onEditSavingsGoal }) {
+export default function MonthlySummary({
+  summary,
+  loading,
+  onEditIncome,
+  onEditSavingsGoal,
+  onOpenFixedExpenses,
+}) {
   const savingTarget = summary?.desiredSavings
   const remainingMonth =
     summary?.remainingMonth ??
@@ -23,6 +29,11 @@ export default function MonthlySummary({ summary, loading, onEditIncome, onEditS
   const handleEditSavingsGoalClick = () => {
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
     onEditSavingsGoal?.()
+  }
+
+  const handleOpenFixedExpensesClick = () => {
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+    onOpenFixedExpenses?.()
   }
 
   return (
@@ -132,19 +143,29 @@ export default function MonthlySummary({ summary, loading, onEditIncome, onEditS
           )}
         </motion.button>
 
-        {/* Gastos Fijos */}
-        <motion.div
-          whileTap={{ scale: 0.97 }}
+        {/* Gastos Fijos (Clicable para ver y marcar casillas) */}
+        <motion.button
+          type="button"
+          onClick={handleOpenFixedExpensesClick}
+          whileTap={{ scale: 0.96 }}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.2, delay: 0.1 }}
-          className="bg-white rounded-2xl p-3 border border-slate-200/80 shadow-xs flex flex-col justify-between select-none"
+          aria-label="Ver y marcar casillas de gastos fijos"
+          className="bg-white hover:bg-amber-50/20 active:bg-amber-50/40 rounded-2xl p-3 border border-slate-200/80 hover:border-amber-200/80 shadow-xs flex flex-col justify-between select-none text-left transition-colors group cursor-pointer"
         >
-          <div className="flex items-center gap-2 mb-1.5">
-            <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
-              <Lock className="w-4 h-4" />
+          <div className="flex items-center justify-between mb-1.5 w-full">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-amber-50 group-hover:bg-amber-100 text-amber-600 flex items-center justify-center transition-colors">
+                <Lock className="w-4 h-4" />
+              </div>
+              <span className="text-xs font-semibold text-slate-500 group-hover:text-slate-700 transition-colors">
+                Gastos Fijos
+              </span>
             </div>
-            <span className="text-xs font-semibold text-slate-500">Gastos Fijos</span>
+            <div className="w-5 h-5 rounded-md text-slate-300 group-hover:text-amber-600 flex items-center justify-center transition-colors">
+              <CheckSquare className="w-3.5 h-3.5" />
+            </div>
           </div>
           {loading && !summary ? (
             <div className="h-6 w-20 bg-slate-100 rounded animate-pulse" />
@@ -153,7 +174,7 @@ export default function MonthlySummary({ summary, loading, onEditIncome, onEditS
               {fmt(summary?.fixedExpenses)}
             </p>
           )}
-        </motion.div>
+        </motion.button>
 
         {/* Gastos Variables */}
         <motion.div

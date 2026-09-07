@@ -33,6 +33,7 @@ import AddExpenseModal from '@/components/AddExpenseModal'
 import EditExpenseModal from '@/components/EditExpenseModal'
 import EditIncomeModal from '@/components/EditIncomeModal'
 import EditSavingsGoalModal from '@/components/EditSavingsGoalModal'
+import FixedExpensesModal from '@/components/FixedExpensesModal'
 import SetupScreen from '@/components/SetupScreen'
 
 const MONTHS = [
@@ -51,6 +52,7 @@ function App() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [showIncomeModal, setShowIncomeModal] = useState(false)
   const [showSavingsGoalModal, setShowSavingsGoalModal] = useState(false)
+  const [showFixedExpensesModal, setShowFixedExpensesModal] = useState(false)
   const [editingExpense, setEditingExpense] = useState(null)
   const [deletingExpense, setDeletingExpense] = useState(null)
   const [pendingCount, setPendingCount] = useState(getPendingExpenses().length)
@@ -250,6 +252,24 @@ function App() {
     }
   }
 
+  const handleFixedExpensesUpdate = (newFixedTotal, updatedSummary) => {
+    if (updatedSummary) {
+      setSummary(updatedSummary)
+    } else {
+      setSummary((prev) => {
+        if (!prev) return prev
+        const prevFixed = prev.fixedExpenses ?? 0
+        const diff = newFixedTotal - prevFixed
+        const prevRemaining = prev.remainingMonth ?? prev.savings ?? 0
+        return {
+          ...prev,
+          fixedExpenses: newFixedTotal,
+          remainingMonth: prevRemaining - diff,
+        }
+      })
+    }
+  }
+
   const handleSync = async () => {
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
     setSyncing(true)
@@ -373,6 +393,7 @@ function App() {
           loading={loading}
           onEditIncome={() => setShowIncomeModal(true)}
           onEditSavingsGoal={() => setShowSavingsGoalModal(true)}
+          onOpenFixedExpenses={() => setShowFixedExpensesModal(true)}
         />
 
         {/* Expense List Section */}
@@ -464,6 +485,18 @@ function App() {
             currentGoal={summary?.desiredSavings ?? 0}
             onSave={handleSaveSavingsGoal}
             onClose={() => setShowSavingsGoalModal(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Fixed Expenses Checklist Modal */}
+      <AnimatePresence>
+        {showFixedExpensesModal && (
+          <FixedExpensesModal
+            month={monthName}
+            currentFixedTotal={summary?.fixedExpenses ?? 0}
+            onSummaryUpdate={handleFixedExpensesUpdate}
+            onClose={() => setShowFixedExpensesModal(false)}
           />
         )}
       </AnimatePresence>

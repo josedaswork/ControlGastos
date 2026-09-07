@@ -269,3 +269,148 @@ export async function syncPendingExpenses() {
 export function getPendingForMonth(month) {
   return getPendingExpenses().filter((e) => e.month === month)
 }
+
+/* ---- Gastos Fijos y Casillas ---- */
+
+export function getCachedFixedExpenses(month) {
+  return getCacheEntry('fixed_expenses_' + month)
+}
+
+export async function getFixedExpenses(month) {
+  try {
+    const data = await callApi({ action: 'getFixedExpenses', month })
+    if (data && Array.isArray(data.fixedExpenses)) {
+      setCacheEntry('fixed_expenses_' + month, data)
+    }
+    return data
+  } catch (err) {
+    const cached = getCacheEntry('fixed_expenses_' + month)
+    if (cached) return cached
+    throw err
+  }
+}
+
+export async function setFixedExpenseStatus(month, row, active) {
+  // Actualización optimista del caché local
+  const cachedFixed = getCacheEntry('fixed_expenses_' + month)
+  if (cachedFixed && Array.isArray(cachedFixed.fixedExpenses)) {
+    const updatedExpenses = cachedFixed.fixedExpenses.map((fe) =>
+      fe.row === row ? { ...fe, active } : fe
+    )
+    const newTotalActive = updatedExpenses.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+    setCacheEntry('fixed_expenses_' + month, {
+      ...cachedFixed,
+      fixedExpenses: updatedExpenses,
+      totalActive: newTotalActive,
+    })
+
+    const cachedSummary = getCacheEntry('summary_' + month)
+    if (cachedSummary) {
+      const prevFixed = cachedSummary.fixedExpenses || 0
+      const diff = newTotalActive - prevFixed
+      const updatedSummary = {
+        ...cachedSummary,
+        fixedExpenses: newTotalActive,
+        remainingMonth: (cachedSummary.remainingMonth ?? cachedSummary.savings ?? 0) - diff,
+      }
+      setCacheEntry('summary_' + month, updatedSummary)
+    }
+  }
+
+  // Llamada a Google Apps Script
+  const result = await callApi({
+    action: 'setFixedExpenseStatus',
+    month,
+    row: String(row),
+    active: String(active),
+  })
+
+  if (result?.fixedExpenses) {
+    const total = result.fixedExpenses.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+    setCacheEntry('fixed_expenses_' + month, {
+      month,
+      fixedExpenses: result.fixedExpenses,
+      totalActive: total,
+    })
+  }
+  if (result?.summary) {
+    setCacheEntry('summary_' + month, result.summary)
+  }
+
+  return result
+}
+
+export async function setFixedExpensesBatch(month, updates) {
+  const result = await callApi({
+    action: 'setFixedExpensesBatch',
+    month,
+    updates: JSON.stringify(updates),
+  })
+
+  if (result?.fixedExpenses) {
+    const total = result.fixedExpenses.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+    setCacheEntry('fixed_expenses_' + month, {
+      month,
+      fixedExpenses: result.fixedExpenses,
+      totalActive: total,
+    })
+  }
+  if (result?.summary) {
+    setCacheEntry('summary_' + month, result.summary)
+  }
+
+  return result
+}
+
+export async function setFixedExpenseAmount(month, row, amount, category) {
+  const numAmount = parseFloat(String(amount).replace(',', '.')) || 0
+
+  // Actualización optimista del caché local
+  const cachedFixed = getCacheEntry('fixed_expenses_' + month)
+  if (cachedFixed && Array.isArray(cachedFixed.fixedExpenses)) {
+    const updatedExpenses = cachedFixed.fixedExpenses.map((fe) =>
+      fe.row === row ? { ...fe, amount: numAmount, ...(category ? { category } : {}) } : fe
+    )
+    const newTotalActive = updatedExpenses.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+    setCacheEntry('fixed_expenses_' + month, {
+      ...cachedFixed,
+      fixedExpenses: updatedExpenses,
+      totalActive: newTotalActive,
+    })
+
+    const cachedSummary = getCacheEntry('summary_' + month)
+    if (cachedSummary) {
+      const prevFixed = cachedSummary.fixedExpenses || 0
+      const diff = newTotalActive - prevFixed
+      const updatedSummary = {
+        ...cachedSummary,
+        fixedExpenses: newTotalActive,
+        remainingMonth: (cachedSummary.remainingMonth ?? cachedSummary.savings ?? 0) - diff,
+      }
+      setCacheEntry('summary_' + month, updatedSummary)
+    }
+  }
+
+  const result = await callApi({
+    action: 'setFixedExpenseAmount',
+    month,
+    row: String(row),
+    amount: String(numAmount),
+    ...(category ? { category } : {}),
+  })
+
+  if (result?.fixedExpenses) {
+    const total = result.fixedExpenses.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+    setCacheEntry('fixed_expenses_' + month, {
+      month,
+      fixedExpenses: result.fixedExpenses,
+      totalActive: total,
+    })
+  }
+  if (result?.summary) {
+    setCacheEntry('summary_' + month, result.summary)
+  }
+
+  return result
+}
+
