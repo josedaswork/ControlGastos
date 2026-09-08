@@ -47,6 +47,11 @@ jobs:
             npx cap sync android
           fi
 
+      - name: Generate Android icons and splash
+        run: |
+          which convert || (sudo apt-get update && sudo apt-get install -y imagemagick)
+          python3 scripts/generate_assets.py
+
       - name: Build debug APK
         working-directory: android
         run: |
