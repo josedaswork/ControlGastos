@@ -85,10 +85,15 @@ export default function SetupScreen({ onSave, onClose, initialUrl }) {
         {/* Header */}
         <div className="text-center space-y-1.5 pt-2">
           <motion.div
-            whileHover={{ scale: 1.08, rotate: 6 }}
-            className="w-14 h-14 rounded-2xl bg-primary/10 text-primary mx-auto flex items-center justify-center mb-3 shadow-xs"
+            whileHover={{ scale: 1.08, rotate: 4 }}
+            className="w-16 h-16 rounded-2xl overflow-hidden mx-auto mb-3 shadow-md shadow-blue-500/20 border border-slate-200/80 bg-white"
           >
-            <Table2 className="w-7 h-7" />
+            <img
+              src="/icon-192.png"
+              alt="Control Gastos Logo"
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
           </motion.div>
           <h1 className="text-2xl font-black tracking-tight text-slate-900">
             Control Gastos

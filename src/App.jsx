@@ -349,11 +349,16 @@ function App() {
         >
           <div className="flex items-center gap-2.5">
             <motion.div
-              whileHover={{ rotate: 8, scale: 1.05 }}
-              whileTap={{ scale: 0.9 }}
-              className="w-10 h-10 rounded-2xl bg-primary text-white flex items-center justify-center shadow-xs shadow-primary/30"
+              whileHover={{ rotate: 4, scale: 1.05 }}
+              whileTap={{ scale: 0.92 }}
+              className="w-10 h-10 rounded-2xl overflow-hidden shadow-xs shadow-blue-500/20 shrink-0 border border-slate-200/80 bg-white"
             >
-              <WalletCards className="w-5 h-5" />
+              <img
+                src="/icon-192.png"
+                alt="Control Gastos Logo"
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
             </motion.div>
             <div>
               <h1 className="text-lg font-black tracking-tight text-slate-900 leading-tight">
