@@ -34,17 +34,22 @@ import EditExpenseModal from '@/components/EditExpenseModal'
 import EditIncomeModal from '@/components/EditIncomeModal'
 import EditSavingsGoalModal from '@/components/EditSavingsGoalModal'
 import FixedExpensesModal from '@/components/FixedExpensesModal'
+import FinalizeMonthModal from '@/components/FinalizeMonthModal'
 import SetupScreen from '@/components/SetupScreen'
-
-const MONTHS = [
-  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
-]
+import {
+  MONTHS,
+  getFinalizedMonths,
+  setMonthFinalized,
+  getEffectiveCurrentMonth,
+} from '@/lib/monthStatus'
 
 function App() {
   const [scriptUrl, setScriptUrl] = useState(getScriptUrl())
   const [showSetup, setShowSetup] = useState(!scriptUrl)
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth())
+  const [finalizedMonths, setFinalizedMonths] = useState(() => getFinalizedMonths())
+  const [effectiveCurrentMonth, setEffectiveCurrentMonth] = useState(() => getEffectiveCurrentMonth())
+  const [selectedMonth, setSelectedMonth] = useState(() => getEffectiveCurrentMonth())
+  const [finalizeModalMonth, setFinalizeModalMonth] = useState(null)
   const [summary, setSummary] = useState(null)
   const [expenses, setExpenses] = useState([])
   const [categories, setCategories] = useState([])
@@ -300,6 +305,21 @@ function App() {
     setShowSetup(false)
   }
 
+  const handleToggleFinalizeMonth = (monthIdx, shouldFinalize) => {
+    const updated = setMonthFinalized(monthIdx, shouldFinalize)
+    setFinalizedMonths(updated)
+    const newEffective = getEffectiveCurrentMonth()
+    setEffectiveCurrentMonth(newEffective)
+
+    if (shouldFinalize) {
+      const nextIdx = (monthIdx + 1) % 12
+      setSelectedMonth(nextIdx)
+      toast.success(`¡Mes de ${MONTHS[monthIdx]} finalizado! Pasando a ${MONTHS[nextIdx]}`)
+    } else {
+      toast.info(`Mes de ${MONTHS[monthIdx]} reabierto`)
+    }
+  }
+
   const pendingForMonth = useMemo(() => getPendingForMonth(monthName), [monthName, pendingCount])
   const sendingForMonth = useMemo(() => sendingExpenses.filter((e) => e.month === monthName), [sendingExpenses, monthName])
 
@@ -339,9 +359,23 @@ function App() {
               <h1 className="text-lg font-black tracking-tight text-slate-900 leading-tight">
                 Control Gastos
               </h1>
-              <p className="text-[11px] font-medium text-slate-400">
-                {monthName} 2026
-              </p>
+              <button
+                type="button"
+                onClick={() => setFinalizeModalMonth(selectedMonth)}
+                className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 hover:text-slate-800 transition-colors group cursor-pointer"
+                title="Haz clic para ver opciones o finalizar este mes"
+              >
+                <span>{monthName} 2026</span>
+                {finalizedMonths.includes(selectedMonth) ? (
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded-full border border-emerald-300">
+                    ✓ Finalizado
+                  </span>
+                ) : selectedMonth === effectiveCurrentMonth ? (
+                  <span className="text-[10px] font-semibold text-primary bg-primary/10 px-1.5 py-0.2 rounded-full">
+                    En curso
+                  </span>
+                ) : null}
+              </button>
             </div>
           </div>
 
@@ -384,8 +418,14 @@ function App() {
           </div>
         </header>
 
-        {/* Month Selector with active pill layout transition */}
-        <MonthSelector selected={selectedMonth} onChange={setSelectedMonth} />
+        {/* Month Selector with active pill layout transition and finalize trigger */}
+        <MonthSelector
+          selected={selectedMonth}
+          onChange={setSelectedMonth}
+          finalizedMonths={finalizedMonths}
+          effectiveCurrentMonth={effectiveCurrentMonth}
+          onOpenFinalize={(idx) => setFinalizeModalMonth(idx)}
+        />
 
         {/* Financial Summary */}
         <MonthlySummary
@@ -497,6 +537,20 @@ function App() {
             currentFixedTotal={summary?.fixedExpenses ?? 0}
             onSummaryUpdate={handleFixedExpensesUpdate}
             onClose={() => setShowFixedExpensesModal(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Finalize Month Modal */}
+      <AnimatePresence>
+        {finalizeModalMonth !== null && (
+          <FinalizeMonthModal
+            monthIndex={finalizeModalMonth}
+            isFinalized={finalizedMonths.includes(finalizeModalMonth)}
+            isCurrentInCourse={finalizeModalMonth === effectiveCurrentMonth}
+            onToggleFinalize={handleToggleFinalizeMonth}
+            onSelectMonth={setSelectedMonth}
+            onClose={() => setFinalizeModalMonth(null)}
           />
         )}
       </AnimatePresence>

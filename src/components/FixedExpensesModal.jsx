@@ -11,6 +11,8 @@ import {
   setFixedExpenseStatus,
   setFixedExpensesBatch,
   setFixedExpenseAmount,
+  sanitizeAndMergeFixedExpenses,
+  FIXED_DEFAULT_CATEGORIES,
 } from '@/lib/sheetsApi'
 import { toast } from 'sonner'
 
@@ -31,15 +33,13 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
   useEffect(() => {
     let isMounted = true
     const cached = getCachedFixedExpenses(month)
-    const isCorruptCache =
-      cached?.fixedExpenses?.length > 0 &&
-      cached.fixedExpenses.every((item) =>
-        /^[0-9]+([.,][0-9]+)?$/.test(String(item.category || '').trim())
-      )
 
-    if (cached?.fixedExpenses?.length > 0 && !isCorruptCache) {
-      setItems(cached.fixedExpenses)
+    if (cached?.fixedExpenses?.length > 0) {
+      setItems(sanitizeAndMergeFixedExpenses([], cached.fixedExpenses))
       setLoading(false)
+    } else {
+      // Precarga inmediata de las 8 categorías oficiales de la plantilla
+      setItems(sanitizeAndMergeFixedExpenses([], []))
     }
 
     async function loadData() {
@@ -48,11 +48,11 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
         const res = await getFixedExpenses(month)
         if (!isMounted) return
         if (res?.fixedExpenses) {
-          setItems(res.fixedExpenses)
+          setItems(sanitizeAndMergeFixedExpenses([], res.fixedExpenses))
         }
       } catch (err) {
         if (!isMounted) return
-        if (!cached?.fixedExpenses?.length || isCorruptCache) {
+        if (!cached?.fixedExpenses?.length) {
           setError(err.message || 'Error al cargar los gastos fijos')
         }
       } finally {
@@ -73,7 +73,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
     try {
       const res = await getFixedExpenses(month)
       if (res?.fixedExpenses) {
-        setItems(res.fixedExpenses)
+        setItems(sanitizeAndMergeFixedExpenses([], res.fixedExpenses))
       }
       if (res?.summary && onSummaryUpdate) {
         onSummaryUpdate(res.summary.fixedExpenses, res.summary)
@@ -98,10 +98,10 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
     const nextActive = !item.active
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
 
-    // Optimistic UI update
+    // Optimistic UI update seguro
     const prevItems = [...items]
     const updated = items.map((i) => (i.row === item.row ? { ...i, active: nextActive } : i))
-    setItems(updated)
+    setItems(sanitizeAndMergeFixedExpenses(prevItems, updated))
     setSyncingRow(item.row)
 
     // Notificar al componente padre del cambio en el total
@@ -111,7 +111,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
     try {
       const res = await setFixedExpenseStatus(month, item.row, nextActive)
       if (res?.fixedExpenses) {
-        setItems(res.fixedExpenses)
+        setItems((prev) => sanitizeAndMergeFixedExpenses(prev, res.fixedExpenses))
       }
       if (res?.summary && onSummaryUpdate) {
         onSummaryUpdate(res.summary.fixedExpenses, res.summary)
@@ -134,7 +134,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
 
     const prevItems = [...items]
     const updated = items.map((i) => ({ ...i, active: targetActive }))
-    setItems(updated)
+    setItems(sanitizeAndMergeFixedExpenses(prevItems, updated))
     setBatchSyncing(true)
 
     const newTotal = updated.reduce((sum, i) => (i.active ? sum + (i.amount || 0) : sum), 0)
@@ -144,7 +144,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
       const updates = items.map((i) => ({ row: i.row, active: targetActive }))
       const res = await setFixedExpensesBatch(month, updates)
       if (res?.fixedExpenses) {
-        setItems(res.fixedExpenses)
+        setItems((prev) => sanitizeAndMergeFixedExpenses(prev, res.fixedExpenses))
       }
       if (res?.summary && onSummaryUpdate) {
         onSummaryUpdate(res.summary.fixedExpenses, res.summary)
@@ -187,7 +187,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
         ? { ...i, amount: numAmount, category: editCategory.trim() || i.category }
         : i
     )
-    setItems(updated)
+    setItems(sanitizeAndMergeFixedExpenses(prevItems, updated))
 
     // Notificar total nuevo
     const newTotal = updated.reduce((sum, i) => (i.active ? sum + (i.amount || 0) : sum), 0)
@@ -199,7 +199,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
         throw new Error(res.error)
       }
       if (res?.fixedExpenses) {
-        setItems(res.fixedExpenses)
+        setItems((prev) => sanitizeAndMergeFixedExpenses(prev, res.fixedExpenses))
       }
       if (res?.summary && onSummaryUpdate) {
         onSummaryUpdate(res.summary.fixedExpenses, res.summary)
@@ -546,6 +546,9 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                       €
                     </span>
                   </div>
+                  <p className="text-[10px] text-slate-500 font-mono pt-1">
+                    Fórmula en Columna F: =IF(G{editingItem?.row}; {editAmount || '0'}; 0)
+                  </p>
                 </div>
 
                 {/* Ajustes rápidos */}

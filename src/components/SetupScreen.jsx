@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'motion/react'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import scriptCode from '../../Files/google-apps-script.js?raw'
 import { getPendingExpenses, clearPendingExpenses } from '../lib/sheetsApi'
+import { toast } from 'sonner'
 
 export default function SetupScreen({ onSave, onClose, initialUrl }) {
   const [url, setUrl] = useState(initialUrl || '')
@@ -14,13 +15,35 @@ export default function SetupScreen({ onSave, onClose, initialUrl }) {
 
   const handleCopy = async () => {
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+    let success = false
     try {
-      await navigator.clipboard.writeText(scriptCode)
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(scriptCode)
+        success = true
+      }
+    } catch (_) {}
+
+    if (!success) {
+      try {
+        const textArea = document.createElement('textarea')
+        textArea.value = scriptCode
+        textArea.style.position = 'fixed'
+        textArea.style.left = '-9999px'
+        textArea.style.top = '-9999px'
+        textArea.setAttribute('readonly', '')
+        document.body.appendChild(textArea)
+        textArea.select()
+        success = document.execCommand('copy')
+        document.body.removeChild(textArea)
+      } catch (_) {}
+    }
+
+    if (success) {
       setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      toast.success('¡Código de Apps Script copiado al portapapeles!')
+      setTimeout(() => setCopied(false), 2500)
+    } else {
+      toast.error('No se pudo copiar automáticamente. Comprueba los permisos de tu navegador.')
     }
   }
 
