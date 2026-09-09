@@ -150,27 +150,17 @@ export default function MonthSelector({
 
                 <span className="relative z-10 font-bold">{m}</span>
 
-                {/* Botón/Check individual por cada mes */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
-                    if (onOpenFinalize) onOpenFinalize(i)
-                  }}
-                  title={
-                    isFinalized
-                      ? `Mes de ${MONTHS[i]} finalizado (haz clic para opciones)`
-                      : `Finalizar mes de ${MONTHS[i]}`
-                  }
-                  className={`relative z-10 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
+                {/* Indicador visual de estado por cada mes (no clicable, solo informativo) */}
+                <div
+                  aria-hidden="true"
+                  className={`pointer-events-none relative z-10 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
                     isFinalized
                       ? isActive
                         ? 'bg-white/25 text-white'
                         : 'bg-emerald-100 text-emerald-700 border border-emerald-300'
                       : isActive
-                      ? 'text-white/60 hover:text-white hover:bg-white/20'
-                      : 'text-slate-300 hover:text-slate-600 hover:bg-slate-100'
+                      ? 'text-white/60'
+                      : 'text-slate-300'
                   }`}
                 >
                   {isFinalized ? (
@@ -180,7 +170,7 @@ export default function MonthSelector({
                   ) : (
                     <CheckCircle2 className="w-3.5 h-3.5 opacity-60" />
                   )}
-                </button>
+                </div>
               </motion.div>
             </div>
           )

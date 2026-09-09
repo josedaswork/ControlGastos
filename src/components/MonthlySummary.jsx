@@ -1,5 +1,5 @@
 import { fmt } from '@/lib/utils'
-import { TrendingUp, Lock, ShoppingBag, Target, Wallet, Pencil, CheckSquare } from 'lucide-react'
+import { TrendingUp, Lock, ShoppingBag, Target, Wallet, Pencil, CheckSquare, BarChart3 } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 
@@ -9,6 +9,7 @@ export default function MonthlySummary({
   onEditIncome,
   onEditSavingsGoal,
   onOpenFixedExpenses,
+  onOpenCharts,
 }) {
   const savingTarget = summary?.desiredSavings
   const remainingMonth =
@@ -72,19 +73,28 @@ export default function MonthlySummary({
             )}
           </div>
 
-          <motion.span
+          <motion.button
+            type="button"
             layout
             key={isPositive ? 'positive' : 'deficit'}
+            onClick={() => {
+              Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+              onOpenCharts?.()
+            }}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.94 }}
             initial={{ scale: 0.85, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className={`text-xs font-bold px-2.5 py-1 rounded-full border ${
+            title="Haz clic para ver los gráficos del Panel de control"
+            className={`inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full border shadow-2xs transition-all cursor-pointer ${
               isPositive
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80'
-                : 'bg-red-50 text-red-700 border-red-200/80'
+                ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200/90'
+                : 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200/90'
             }`}
           >
-            {isPositive ? 'En balance' : 'Déficit'}
-          </motion.span>
+            <BarChart3 className="w-3.5 h-3.5 opacity-80" />
+            <span>{isPositive ? 'En balance' : 'Déficit'}</span>
+          </motion.button>
         </div>
 
         {/* Spend progress bar with fluid motion */}

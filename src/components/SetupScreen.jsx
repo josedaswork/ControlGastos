@@ -5,7 +5,11 @@ import { Copy, Check, Table2, ArrowRight, ShieldCheck, X, Trash2, Globe } from '
 import { motion, AnimatePresence } from 'motion/react'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import scriptCode from '../../Files/google-apps-script.js?raw'
-import { getPendingExpenses, clearPendingExpenses, setLocaleSpain } from '../lib/sheetsApi'
+import {
+  getPendingExpenses,
+  clearPendingExpenses,
+  setLocaleSpain,
+} from '../lib/sheetsApi'
 import { toast } from 'sonner'
 
 export default function SetupScreen({ onSave, onClose, initialUrl }) {
@@ -118,7 +122,7 @@ export default function SetupScreen({ onSave, onClose, initialUrl }) {
         </div>
 
         {/* Input Form */}
-        <div className="space-y-3 pt-2">
+        <div className="space-y-3.5 pt-2">
           <div>
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
               URL de Google Apps Script

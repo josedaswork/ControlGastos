@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Toaster, toast } from 'sonner'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
-import { RefreshCw, Plus, Settings, WalletCards, AlertTriangle } from 'lucide-react'
+import { RefreshCw, Plus, Settings, WalletCards, AlertTriangle, ArrowUpRight } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Button } from '@/components/ui/button'
 import { fmt } from '@/lib/utils'
 import {
   getScriptUrl,
   setScriptUrl as saveScriptUrl,
+  getSpreadsheetUrl,
   getCategories as fetchCategories,
   getExpenses as fetchExpenses,
   getSummary as fetchSummary,
@@ -35,6 +36,7 @@ import EditIncomeModal from '@/components/EditIncomeModal'
 import EditSavingsGoalModal from '@/components/EditSavingsGoalModal'
 import FixedExpensesModal from '@/components/FixedExpensesModal'
 import FinalizeMonthModal from '@/components/FinalizeMonthModal'
+import ChartsModal from '@/components/ChartsModal'
 import SetupScreen from '@/components/SetupScreen'
 import {
   MONTHS,
@@ -45,6 +47,7 @@ import {
 
 function App() {
   const [scriptUrl, setScriptUrl] = useState(getScriptUrl())
+  const [spreadsheetUrl, setSpreadsheetUrl] = useState(() => getSpreadsheetUrl())
   const [showSetup, setShowSetup] = useState(!scriptUrl)
   const [finalizedMonths, setFinalizedMonths] = useState(() => getFinalizedMonths())
   const [effectiveCurrentMonth, setEffectiveCurrentMonth] = useState(() => getEffectiveCurrentMonth())
@@ -58,6 +61,7 @@ function App() {
   const [showIncomeModal, setShowIncomeModal] = useState(false)
   const [showSavingsGoalModal, setShowSavingsGoalModal] = useState(false)
   const [showFixedExpensesModal, setShowFixedExpensesModal] = useState(false)
+  const [showChartsModal, setShowChartsModal] = useState(false)
   const [editingExpense, setEditingExpense] = useState(null)
   const [deletingExpense, setDeletingExpense] = useState(null)
   const [pendingCount, setPendingCount] = useState(getPendingExpenses().length)
@@ -302,6 +306,7 @@ function App() {
     if (url !== scriptUrl) clearAllCache()
     saveScriptUrl(url)
     setScriptUrl(url)
+    setSpreadsheetUrl(getSpreadsheetUrl())
     setShowSetup(false)
   }
 
@@ -385,6 +390,22 @@ function App() {
           </div>
 
           <div className="flex items-center gap-1.5">
+            {/* Spreadsheet Link Button (Flecha en diagonal arriba a la derecha) */}
+            <motion.a
+              href={spreadsheetUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              whileTap={{ scale: 0.88, rotate: 12 }}
+              onClick={() => {
+                Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+              }}
+              aria-label="Abrir hoja de cálculo en Google Sheets"
+              title="Abrir hoja de cálculo en Google Sheets"
+              className="w-10 h-10 rounded-2xl bg-white border border-slate-200/80 shadow-xs hover:bg-slate-50 flex items-center justify-center text-slate-600 hover:text-emerald-700 transition-colors"
+            >
+              <ArrowUpRight className="h-4.5 w-4.5" />
+            </motion.a>
+
             {/* Sync Button */}
             <motion.button
               type="button"
@@ -439,6 +460,7 @@ function App() {
           onEditIncome={() => setShowIncomeModal(true)}
           onEditSavingsGoal={() => setShowSavingsGoalModal(true)}
           onOpenFixedExpenses={() => setShowFixedExpensesModal(true)}
+          onOpenCharts={() => setShowChartsModal(true)}
         />
 
         {/* Expense List Section */}
@@ -617,6 +639,12 @@ function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Charts / Panel de Control Modal */}
+      <ChartsModal
+        isOpen={showChartsModal}
+        onClose={() => setShowChartsModal(false)}
+      />
 
       <Toaster position="top-center" theme="light" richColors />
     </div>

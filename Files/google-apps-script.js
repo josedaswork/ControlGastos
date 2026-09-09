@@ -38,7 +38,19 @@ function doGet(e) {
 
   try {
     if (action === 'ping') {
-      result = { status: 'ok', version: '2.2.0', timestamp: new Date().toISOString() };
+      result = {
+        status: 'ok',
+        version: '2.3.0',
+        spreadsheetUrl: ss.getUrl(),
+        spreadsheetName: ss.getName(),
+        timestamp: new Date().toISOString()
+      };
+    } else if (action === 'getSpreadsheetInfo') {
+      result = {
+        status: 'ok',
+        spreadsheetUrl: ss.getUrl(),
+        spreadsheetName: ss.getName()
+      };
     } else if (action === 'getCategories') {
       result = getCategories(ss);
     } else if (action === 'getExpenses') {
@@ -109,6 +121,8 @@ function doGet(e) {
       result = setFixedExpensesBatch(ss, params.month, batchUpdates);
     } else if (action === 'repairFixedExpenseFormulas') {
       result = repairFixedExpenseFormulas(ss, params.month, params.forceAll === 'true' || params.forceAll === true);
+    } else if (action === 'getControlPanelData' || action === 'getDashboardData') {
+      result = getControlPanelData(ss);
     } else if (action === 'setLocaleSpain') {
       ensureSpanishLocale(ss);
       result = { status: 'ok', locale: ss.getSpreadsheetLocale() };
@@ -200,6 +214,8 @@ function doPost(e) {
       result = setFixedExpensesBatch(ss, data.month, data.updates || []);
     } else if (data.action === 'repairFixedExpenseFormulas') {
       result = repairFixedExpenseFormulas(ss, data.month, data.forceAll === true || data.forceAll === 'true');
+    } else if (data.action === 'getControlPanelData' || data.action === 'getDashboardData') {
+      result = getControlPanelData(ss);
     } else if (data.action === 'setLocaleSpain') {
       ensureSpanishLocale(ss);
       result = { status: 'ok', locale: ss.getSpreadsheetLocale() };
@@ -1531,6 +1547,226 @@ function repairFixedExpenseFormulas(ss, month, forceAll) {
     summary: updatedSummary,
     fixedExpenses: updatedFixed.fixedExpenses,
     totalActive: updatedFixed.totalActive
+  };
+}
+
+/**
+ * Obtiene los datos anuales consolidados de la pestaña 'Panel de control'.
+ * Extrae ingresos, gastos totales, ahorro, gastos fijos y gastos variables de cada mes.
+ * Si la pestaña no está disponible, extrae la información directamente de las hojas mensuales.
+ */
+function getControlPanelData(ss) {
+  var months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  var shortMonths = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
+  // Buscar la hoja de 'Data gráficos' o 'Panel de control'
+  var wsPanel = null;
+  var wsDataGraficos = null;
+  var sheets = ss.getSheets();
+  for (var s = 0; s < sheets.length; s++) {
+    var nameLower = sheets[s].getName().toLowerCase();
+    if (nameLower.indexOf('gráfico') !== -1 || nameLower.indexOf('grafico') !== -1) {
+      wsDataGraficos = sheets[s];
+    } else if (nameLower.indexOf('panel') !== -1) {
+      wsPanel = sheets[s];
+    }
+  }
+
+  var monthlyData = [];
+  var totalIncome = 0;
+  var totalExpenses = 0;
+  var totalSavings = 0;
+  var totalFixed = 0;
+  var totalVariable = 0;
+
+  // Si existe 'Data gráficos', leer filas 4 a 15 (Columnas B a F)
+  // B: Mes, C: Ingresos, D: Gastos Fijos, E: Gastos Variables, F: Gastos Totales
+  var graficosMatrix = null;
+  if (wsDataGraficos) {
+    try {
+      graficosMatrix = wsDataGraficos.getRange(4, 2, 12, 5).getValues();
+    } catch (e) {}
+  }
+
+  // Matriz de 'Panel de control'
+  var panelMatrix = null;
+  var colMap = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26];
+  if (wsPanel) {
+    try {
+      panelMatrix = wsPanel.getRange(5, 1, 11, 28).getValues();
+    } catch (e) {}
+  }
+
+  for (var m = 0; m < 12; m++) {
+    var mName = months[m];
+    var mShort = shortMonths[m];
+    var colIdx = colMap[m] - 1; // 0-indexed para Panel de control
+
+    var income = 0;
+    var expenses = 0;
+    var fixed = 0;
+    var variable = 0;
+    var savings = 0;
+    var pctFixed = 0;
+    var pctVar = 0;
+
+    // 1. Intentar leer de 'Data gráficos' si tiene datos para esta fila
+    if (graficosMatrix && graficosMatrix[m]) {
+      var rowG = graficosMatrix[m];
+      var gInc = parseFloat(String(rowG[1]).replace(',', '.')) || 0;
+      var gFix = parseFloat(String(rowG[2]).replace(',', '.')) || 0;
+      var gVar = parseFloat(String(rowG[3]).replace(',', '.')) || 0;
+      var gExp = parseFloat(String(rowG[4]).replace(',', '.')) || (gFix + gVar);
+
+      if (gInc > 0 || gExp > 0 || gFix > 0 || gVar > 0) {
+        income = gInc;
+        fixed = gFix;
+        variable = gVar;
+        expenses = gExp;
+      }
+    }
+
+    // 2. Si no hay datos o faltan, leer de 'Panel de control'
+    if (panelMatrix) {
+      var rawIncome = panelMatrix[2] ? panelMatrix[2][colIdx] : 0;
+      var rawExpenses = panelMatrix[3] ? panelMatrix[3][colIdx] : 0;
+      var rawSavings = panelMatrix[5] ? panelMatrix[5][colIdx] : 0;
+      var rawPctFixed = panelMatrix[8] ? panelMatrix[8][colIdx] : 0;
+      var rawPctVar = panelMatrix[9] ? panelMatrix[9][colIdx] : 0;
+
+      var pIncome = parseFloat(String(rawIncome).replace(',', '.')) || 0;
+      var pExpenses = parseFloat(String(rawExpenses).replace(',', '.')) || 0;
+      var pSavings = parseFloat(String(rawSavings).replace(',', '.')) || 0;
+      var pPctFixed = parseFloat(String(rawPctFixed).replace(',', '.')) || 0;
+      var pPctVar = parseFloat(String(rawPctVar).replace(',', '.')) || 0;
+
+      if (income === 0 && pIncome > 0) income = pIncome;
+      if (expenses === 0 && pExpenses > 0) expenses = pExpenses;
+      if (savings === 0 && pSavings > 0) savings = pSavings;
+      if (pctFixed === 0 && pPctFixed > 0) pctFixed = pPctFixed;
+      if (pctVar === 0 && pPctVar > 0) pctVar = pPctVar;
+
+      if (fixed === 0 && pctFixed > 0 && income > 0) {
+        fixed = Math.round(pctFixed * income * 100) / 100;
+      }
+      if (variable === 0 && pctVar > 0 && income > 0) {
+        variable = Math.round(pctVar * income * 100) / 100;
+      }
+    }
+
+    // 3. Si sigue sin datos de ingresos/gastos O sin desglose fijo/variable, consultar hoja del mes
+    if (income === 0 && expenses === 0 && fixed === 0 && variable === 0) {
+      try {
+        var monthSum = getSummary(ss, mName);
+        if (monthSum && !monthSum.error) {
+          if (monthSum.income) income = monthSum.income;
+          if (monthSum.fixedExpenses) fixed = monthSum.fixedExpenses;
+          if (monthSum.variableExpenses) variable = monthSum.variableExpenses;
+          if (monthSum.totalExpenses) expenses = monthSum.totalExpenses;
+          if (monthSum.savings) savings = monthSum.savings;
+        }
+      } catch (e) {}
+    } else if (fixed === 0 && variable === 0 && expenses > 0) {
+      try {
+        var monthSum2 = getSummary(ss, mName);
+        if (monthSum2 && !monthSum2.error) {
+          fixed = monthSum2.fixedExpenses || 0;
+          variable = monthSum2.variableExpenses || 0;
+        }
+      } catch (e) {}
+
+      if (fixed === 0 && variable === 0) {
+        variable = expenses;
+      }
+    }
+
+    if (expenses === 0 && (fixed > 0 || variable > 0)) {
+      expenses = fixed + variable;
+    }
+    if (savings === 0 && income > 0) {
+      savings = income > expenses ? income - expenses : 0;
+    }
+
+    var hasData = income > 0 || expenses > 0 || savings > 0 || fixed > 0 || variable > 0;
+
+    monthlyData.push({
+      month: mName,
+      shortMonth: mShort,
+      monthIndex: m,
+      income: Math.round(income * 100) / 100,
+      expenses: Math.round(expenses * 100) / 100,
+      fixedExpenses: Math.round(fixed * 100) / 100,
+      variableExpenses: Math.round(variable * 100) / 100,
+      savings: Math.round(savings * 100) / 100,
+      netBalance: Math.round((income - expenses) * 100) / 100,
+      pctFixed: income > 0 ? Math.round((fixed / income) * 10000) / 10000 : 0,
+      pctVar: income > 0 ? Math.round((variable / income) * 10000) / 10000 : 0,
+      hasData: hasData
+    });
+
+    if (hasData) {
+      totalIncome += income;
+      totalExpenses += expenses;
+      totalSavings += savings;
+      totalFixed += fixed;
+      totalVariable += variable;
+    }
+  }
+  } else {
+    // Si la hoja 'Panel de control' no existe, escanear hojas de meses
+    for (var i = 0; i < 12; i++) {
+      var nameI = months[i];
+      var sumI = getSummary(ss, nameI);
+      var inc = (sumI && !sumI.error) ? (sumI.income || 0) : 0;
+      var fix = (sumI && !sumI.error) ? (sumI.fixedExpenses || 0) : 0;
+      var vari = (sumI && !sumI.error) ? (sumI.variableExpenses || 0) : 0;
+      var exp = fix + vari;
+      var sav = (sumI && !sumI.error) ? (sumI.savings || (inc - exp)) : 0;
+      var hasD = inc > 0 || exp > 0;
+
+      monthlyData.push({
+        month: nameI,
+        shortMonth: shortMonths[i],
+        monthIndex: i,
+        income: Math.round(inc * 100) / 100,
+        expenses: Math.round(exp * 100) / 100,
+        fixedExpenses: Math.round(fix * 100) / 100,
+        variableExpenses: Math.round(vari * 100) / 100,
+        savings: Math.round(sav * 100) / 100,
+        netBalance: Math.round((inc - exp) * 100) / 100,
+        pctFixed: inc > 0 ? fix / inc : 0,
+        pctVar: inc > 0 ? vari / inc : 0,
+        hasData: hasD
+      });
+
+      if (hasD) {
+        totalIncome += inc;
+        totalExpenses += exp;
+        totalSavings += sav;
+        totalFixed += fix;
+        totalVariable += vari;
+      }
+    }
+  }
+
+  var activeMonths = monthlyData.filter(function(d) { return d.hasData; });
+  var count = activeMonths.length || 1;
+
+  return {
+    success: true,
+    monthlyData: monthlyData,
+    summary: {
+      totalIncome: Math.round(totalIncome * 100) / 100,
+      totalExpenses: Math.round(totalExpenses * 100) / 100,
+      totalSavings: Math.round(totalSavings * 100) / 100,
+      totalFixed: Math.round(totalFixed * 100) / 100,
+      totalVariable: Math.round(totalVariable * 100) / 100,
+      netBalance: Math.round((totalIncome - totalExpenses) * 100) / 100,
+      avgIncome: Math.round((totalIncome / count) * 100) / 100,
+      avgExpenses: Math.round((totalExpenses / count) * 100) / 100,
+      avgSavings: Math.round((totalSavings / count) * 100) / 100,
+      activeMonthsCount: activeMonths.length
+    }
   };
 }
 
