@@ -108,7 +108,10 @@ function doGet(e) {
       }
       result = setFixedExpensesBatch(ss, params.month, batchUpdates);
     } else if (action === 'repairFixedExpenseFormulas') {
-      result = repairFixedExpenseFormulas(ss, params.month);
+      result = repairFixedExpenseFormulas(ss, params.month, params.forceAll === 'true' || params.forceAll === true);
+    } else if (action === 'setLocaleSpain') {
+      ensureSpanishLocale(ss);
+      result = { status: 'ok', locale: ss.getSpreadsheetLocale() };
     } else {
       result = { error: 'Acción desconocida: ' + action };
     }
@@ -196,7 +199,10 @@ function doPost(e) {
     } else if (data.action === 'setFixedExpensesBatch') {
       result = setFixedExpensesBatch(ss, data.month, data.updates || []);
     } else if (data.action === 'repairFixedExpenseFormulas') {
-      result = repairFixedExpenseFormulas(ss, data.month);
+      result = repairFixedExpenseFormulas(ss, data.month, data.forceAll === true || data.forceAll === 'true');
+    } else if (data.action === 'setLocaleSpain') {
+      ensureSpanishLocale(ss);
+      result = { status: 'ok', locale: ss.getSpreadsheetLocale() };
     } else {
       result = { error: 'Acción desconocida' };
     }
@@ -922,11 +928,17 @@ function setTotalIncome(ss, month, amount) {
     }
   }
 
-  // 4. Asegurar fórmula =SUM(C13:C993) en C10 si fue sobreescrita
+  // 4. Asegurar fórmula =SUM(C13:C993) / =SUMA(C13:C993) en C10 si fue sobreescrita
   var cellC10 = ws.getRange(10, 3);
   var formulaC10 = cellC10.getFormula();
-  if (!formulaC10 || formulaC10.indexOf('SUM') === -1) {
-    cellC10.setFormula('=SUM(C13:C993)');
+  if (!formulaC10 || (formulaC10.indexOf('SUM') === -1 && formulaC10.indexOf('SUMA') === -1)) {
+    try {
+      cellC10.setFormula('=SUM(C13:C993)');
+    } catch (e) {
+      try {
+        cellC10.setFormula('=SUMA(C13:C993)');
+      } catch (e2) {}
+    }
   }
 
   SpreadsheetApp.flush();
@@ -986,6 +998,124 @@ var FIXED_DEFAULT_AMOUNTS = {
   20: 36,
   21: 0
 };
+
+/**
+ * Asegura que la hoja de cálculo use la configuración regional de España (es_ES).
+ * Esto garantiza que:
+ *   - Los decimales se separen por coma (,)
+ *   - Los separadores de argumentos en fórmulas de Excel y Sheets sean punto y coma (;)
+ *   - Google Sheets muestre en la barra de fórmulas fx: =IF(G21; 190,89; 0)
+ */
+function ensureSpanishLocale(ss) {
+  try {
+    if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (ss && ss.getSpreadsheetLocale) {
+      var currentLocale = ss.getSpreadsheetLocale();
+      if (currentLocale !== 'es_ES' && currentLocale !== 'es_es') {
+        ss.setSpreadsheetLocale('es_ES');
+      }
+    }
+  } catch (e) {
+    Logger.log('Aviso al configurar locale regional: ' + e);
+  }
+}
+
+/**
+ * Añade un menú personalizado directamente dentro de Google Sheets
+ * para que puedas configurar la región o reparar fórmulas con 1 solo clic.
+ */
+function onOpen() {
+  try {
+    SpreadsheetApp.getUi()
+      .createMenu('Control Gastos')
+      .addItem('Configurar región España (decimales con coma , y fórmulas con ;)', 'menuSetLocaleSpain')
+      .addItem('Reparar todas las fórmulas de Gastos Fijos', 'menuRepairAllFixedExpenses')
+      .addToUi();
+  } catch (e) {}
+}
+
+function menuSetLocaleSpain() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ensureSpanishLocale(ss);
+  SpreadsheetApp.flush();
+  SpreadsheetApp.getUi().alert(
+    'Configuración Regional España Aplicada',
+    'La hoja ha sido configurada a España (es_ES).\n\n' +
+    '• Separador de decimales: coma (,)\n' +
+    '• Separador de fórmulas: punto y coma (;)\n\n' +
+    'Las fórmulas de Google Sheets en la barra "fx" ahora muestran ; y , automáticamente.',
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+}
+
+function menuRepairAllFixedExpenses() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ensureSpanishLocale(ss);
+  var months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  var totalRestored = 0;
+  for (var i = 0; i < months.length; i++) {
+    var rep = repairFixedExpenseFormulas(ss, months[i], true);
+    if (rep && rep.restored) totalRestored += rep.restored;
+  }
+  SpreadsheetApp.flush();
+  SpreadsheetApp.getUi().alert(
+    'Fórmulas Reparadas',
+    'Se han actualizado las fórmulas de gastos fijos para todos los meses.\nTotal celdas actualizadas: ' + totalRestored,
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+}
+
+/**
+ * Formatea un importe numérico para su inserción en fórmulas de Excel y Google Sheets
+ * en configuración regional española/europea:
+ *   - Separador de argumentos: punto y coma (;)
+ *   - Separador de decimales: coma (,) en lugar de punto (.)
+ * Ejemplos:
+ *   470 -> "470"
+ *   24.99 -> "24,99"
+ *   3.5 -> "3,5"
+ *   "41,62" -> "41,62"
+ */
+function formatNumberForFormula(amount) {
+  if (amount === undefined || amount === null || amount === '') return '0';
+  var num = (typeof amount === 'number') ? amount : parseFloat(String(amount).replace(',', '.'));
+  if (isNaN(num)) return '0';
+  var rounded = Math.round(num * 100) / 100;
+  return String(rounded).replace('.', ',');
+}
+
+/**
+ * Asigna la fórmula condicional del gasto fijo a una celda:
+ * Formato primario español/europeo: =IF(G#; importe; 0)
+ * con separador de argumentos ";" y decimales con ",".
+ * Ejemplo: =IF(G15; 24,99; 0)
+ * Incluye fallback automático a =SI(...) y a formato estándar US por máxima compatibilidad.
+ */
+function setFixedExpenseCellFormula(cell, checkRef, amount) {
+  var formattedAmount = formatNumberForFormula(amount);
+  var usNum = (typeof amount === 'number') ? amount : (parseFloat(String(amount).replace(',', '.')) || 0);
+
+  // Asegurar locale regional de España para que Sheets interprete y muestre ';' y ','
+  try {
+    var ss = cell.getSheet().getParent();
+    ensureSpanishLocale(ss);
+  } catch (locErr) {}
+
+  var formulasToTry = [
+    '=IF(' + checkRef + '; ' + formattedAmount + '; 0)',
+    '=SI(' + checkRef + '; ' + formattedAmount + '; 0)',
+    '=IF(' + checkRef + '; ' + usNum + '; 0)',
+    '=SI(' + checkRef + '; ' + usNum + '; 0)',
+    '=IF(' + checkRef + ', ' + usNum + ', 0)'
+  ];
+
+  for (var i = 0; i < formulasToTry.length; i++) {
+    try {
+      cell.setFormula(formulasToTry[i]);
+      return;
+    } catch (err) {}
+  }
+}
 
 /**
  * Localiza con precisión matemática las columnas de Gastos Fijos en una hoja de mes.
@@ -1149,7 +1279,7 @@ function getFixedExpenses(ss, month) {
       // Si la celda en Col F estaba corrupta y tenemos casilla en Col G, auto-reparamos la fórmula en Col F
       if (cols.hasCheckbox && cols.checkCol && (isCorruptedBool || (!formula && baseAmount > 0))) {
         try {
-          ws.getRange(rowNum, cols.amtCol).setFormula('=IF(G' + rowNum + '; ' + baseAmount + '; 0)');
+          setFixedExpenseCellFormula(ws.getRange(rowNum, cols.amtCol), 'G' + rowNum, baseAmount);
           needsFlush = true;
         } catch (repairErr) {}
       }
@@ -1222,7 +1352,7 @@ function setFixedExpenseStatus(ss, month, row, active) {
         curVal = FIXED_DEFAULT_AMOUNTS[targetRow];
       }
       if (curVal > 0) {
-        amtCell.setFormula('=IF(' + checkRef + '; ' + curVal + '; 0)');
+        setFixedExpenseCellFormula(amtCell, checkRef, curVal);
       }
     }
   } else {
@@ -1272,11 +1402,11 @@ function setFixedExpenseAmount(ss, month, row, newAmount, newCategory) {
     ws.getRange(targetRow, cols.catCol).setValue(String(newCategory).trim());
   }
 
-  // 2. Actualizar el importe en Col F con fórmula =IF(G#; importe; 0)
+  // 2. Actualizar el importe en Col F con fórmula =IF(G#; importe; 0) (separador ';' y decimales ',')
   var amtCell = ws.getRange(targetRow, cols.amtCol);
   if (cols.hasCheckbox && cols.checkCol) {
     var checkRef = ws.getRange(targetRow, cols.checkCol).getA1Notation(); // G#
-    amtCell.setFormula('=IF(' + checkRef + '; ' + numAmount + '; 0)');
+    setFixedExpenseCellFormula(amtCell, checkRef, numAmount);
   } else {
     amtCell.setValue(numAmount);
   }
@@ -1327,7 +1457,7 @@ function setFixedExpensesBatch(ss, month, updates) {
           var checkRef = ws.getRange(row, cols.checkCol).getA1Notation();
           var curAmt = u.amount || FIXED_DEFAULT_AMOUNTS[row] || 0;
           if (curAmt > 0) {
-            amtCell.setFormula('=IF(' + checkRef + '; ' + curAmt + '; 0)');
+            setFixedExpenseCellFormula(amtCell, checkRef, curAmt);
           }
         }
       } else {
@@ -1354,9 +1484,11 @@ function setFixedExpensesBatch(ss, month, updates) {
 
 /**
  * Restaura todas las fórmulas de Columna F =IF(G#; importe; 0) para filas 13 a 21.
- * Repara instantáneamente cualquier celda que haya quedado con "TRUE" o números planos.
+ * Repara instantáneamente cualquier celda que haya quedado con "TRUE", números planos
+ * o fórmulas con sintaxis incorrecta (, en vez de ; o punto decimal).
  */
-function repairFixedExpenseFormulas(ss, month) {
+function repairFixedExpenseFormulas(ss, month, forceAll) {
+  ensureSpanishLocale(ss);
   var ws = findSheet(ss, month);
   if (!ws) return { error: 'Mes no encontrado: ' + month };
 
@@ -1369,11 +1501,19 @@ function repairFixedExpenseFormulas(ss, month) {
     var amtCell = ws.getRange(row, cols.amtCol); // Col F (6)
     var curFormula = String(amtCell.getFormula() || '');
 
-    if (!curFormula || (curFormula.indexOf('IF') === -1 && curFormula.indexOf('SI') === -1)) {
+    var needsUpdate = forceAll || !curFormula || (curFormula.indexOf('IF') === -1 && curFormula.indexOf('SI') === -1);
+    // Si la fórmula actual contiene punto decimal o coma como separador de argumentos (sin punto y coma)
+    if (!needsUpdate && (curFormula.indexOf('.') !== -1 || (curFormula.indexOf(',') !== -1 && curFormula.indexOf(';') === -1))) {
+      needsUpdate = true;
+    }
+
+    if (needsUpdate) {
       var curVal = parseFloat(String(amtCell.getValue()).replace(',', '.')) || 0;
-      var amtToUse = curVal > 0 ? curVal : defaultAmt;
+      var formulaMatch = curFormula.match(/(?:IF|SI)\s*\(\s*[^,;]+[,;]\s*["']?([0-9]+(?:[.,][0-9]+)?)["']?/i);
+      var formulaAmt = formulaMatch ? parseFloat(formulaMatch[1].replace(',', '.')) : 0;
+      var amtToUse = curVal > 0 ? curVal : (formulaAmt > 0 ? formulaAmt : defaultAmt);
       if (amtToUse > 0) {
-        amtCell.setFormula('=IF(' + checkRef + '; ' + amtToUse + '; 0)');
+        setFixedExpenseCellFormula(amtCell, checkRef, amtToUse);
         restored++;
       }
     }

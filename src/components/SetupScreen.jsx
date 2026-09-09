@@ -1,17 +1,31 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Copy, Check, Table2, ArrowRight, ShieldCheck, X, Trash2 } from 'lucide-react'
+import { Copy, Check, Table2, ArrowRight, ShieldCheck, X, Trash2, Globe } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import scriptCode from '../../Files/google-apps-script.js?raw'
-import { getPendingExpenses, clearPendingExpenses } from '../lib/sheetsApi'
+import { getPendingExpenses, clearPendingExpenses, setLocaleSpain } from '../lib/sheetsApi'
 import { toast } from 'sonner'
 
 export default function SetupScreen({ onSave, onClose, initialUrl }) {
   const [url, setUrl] = useState(initialUrl || '')
   const [copied, setCopied] = useState(false)
+  const [settingLocale, setSettingLocale] = useState(false)
   const [pendingCount, setPendingCount] = useState(() => getPendingExpenses().length)
+
+  const handleApplyLocaleSpain = async () => {
+    Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {})
+    setSettingLocale(true)
+    try {
+      await setLocaleSpain()
+      toast.success('Configuración regional de España aplicada en tu hoja')
+    } catch (err) {
+      toast.error('Comprueba la conexión con Google Sheets: ' + err.message)
+    } finally {
+      setSettingLocale(false)
+    }
+  }
 
   const handleCopy = async () => {
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
@@ -181,6 +195,30 @@ export default function SetupScreen({ onSave, onClose, initialUrl }) {
               </AnimatePresence>
             </Button>
           </motion.div>
+
+          <div className="mt-3.5 p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs text-slate-700 space-y-2">
+            <div className="flex items-center gap-1.5 font-bold text-slate-800">
+              <Globe className="w-4 h-4 text-blue-600" />
+              <span>Sintaxis de fórmulas (; y ,)</span>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Google Sheets muestra en la barra <code className="font-mono font-bold text-slate-700">fx</code> el separador <code className="font-bold text-slate-700">;</code> y los decimales con coma <code className="font-bold text-slate-700">,</code> cuando la <strong>Configuración regional</strong> de la hoja está en <strong>España</strong>.
+            </p>
+            <p className="text-[11px] text-slate-600 font-medium">
+              En tu hoja: <strong>Archivo → Configuración → Configuración regional → España</strong>.
+            </p>
+            {url && (
+              <button
+                type="button"
+                disabled={settingLocale}
+                onClick={handleApplyLocaleSpain}
+                className="w-full py-2 px-3 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-xs border border-blue-200/80 shadow-2xs transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+              >
+                <Globe className={`w-3.5 h-3.5 ${settingLocale ? 'animate-spin text-blue-600' : 'text-blue-600'}`} />
+                {settingLocale ? 'Configurando región...' : 'Ajustar hoja a región España'}
+              </button>
+            )}
+          </div>
 
           {pendingCount > 0 && (
             <motion.div

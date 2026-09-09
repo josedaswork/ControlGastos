@@ -584,10 +584,17 @@ export async function setFixedExpenseAmount(month, row, amount, category) {
   }
 }
 
-export async function repairFixedExpenseFormulas(month) {
+export async function setLocaleSpain() {
+  return await callApi({
+    action: 'setLocaleSpain'
+  })
+}
+
+export async function repairFixedExpenseFormulas(month, forceAll = true) {
   const result = await callApi({
     action: 'repairFixedExpenseFormulas',
     month,
+    forceAll: forceAll ? 'true' : 'false'
   })
 
   if (result?.fixedExpenses) {

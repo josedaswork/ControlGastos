@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Lock, X, Check, CheckSquare, Square, RefreshCw, AlertCircle, Pencil } from 'lucide-react'
+import { Lock, X, Check, CheckSquare, Square, RefreshCw, AlertCircle, Pencil, Wrench } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,7 @@ import {
   setFixedExpenseStatus,
   setFixedExpensesBatch,
   setFixedExpenseAmount,
+  repairFixedExpenseFormulas,
   sanitizeAndMergeFixedExpenses,
   FIXED_DEFAULT_CATEGORIES,
 } from '@/lib/sheetsApi'
@@ -22,6 +23,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
   const [syncingRow, setSyncingRow] = useState(null)
   const [batchSyncing, setBatchSyncing] = useState(false)
   const [error, setError] = useState(null)
+  const [repairing, setRepairing] = useState(false)
 
   // Estado para edición del importe
   const [editingItem, setEditingItem] = useState(null)
@@ -84,6 +86,27 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
       toast.error('Error al actualizar: ' + err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Reparar y re-aplicar fórmulas condicionales con sintaxis España (; y ,)
+  const handleRepair = async () => {
+    if (repairing || loading) return
+    Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {})
+    setRepairing(true)
+    try {
+      const res = await repairFixedExpenseFormulas(month, true)
+      if (res?.fixedExpenses) {
+        setItems(sanitizeAndMergeFixedExpenses([], res.fixedExpenses))
+      }
+      if (res?.summary && onSummaryUpdate) {
+        onSummaryUpdate(res.summary.fixedExpenses, res.summary)
+      }
+      toast.success('Fórmulas comprobadas y configuradas con ";" y ","')
+    } catch (err) {
+      toast.error('Error al reparar fórmulas: ' + err.message)
+    } finally {
+      setRepairing(false)
     }
   }
 
@@ -260,8 +283,18 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
           <div className="flex items-center gap-1.5">
             <button
               type="button"
+              onClick={handleRepair}
+              disabled={repairing || loading}
+              title="Ajustar y reparar fórmulas con formato España (; y ,)"
+              aria-label="Reparar fórmulas"
+              className="w-8 h-8 rounded-full bg-slate-100 hover:bg-amber-100 text-slate-500 hover:text-amber-700 flex items-center justify-center transition-colors disabled:opacity-50"
+            >
+              <Wrench className={`w-3.5 h-3.5 ${repairing ? 'animate-spin text-amber-600' : ''}`} />
+            </button>
+            <button
+              type="button"
               onClick={handleRefresh}
-              disabled={loading}
+              disabled={loading || repairing}
               aria-label="Actualizar gastos fijos"
               className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200/80 text-slate-500 hover:text-slate-700 flex items-center justify-center transition-colors disabled:opacity-50"
             >
@@ -547,7 +580,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-500 font-mono pt-1">
-                    Fórmula en Columna F: =IF(G{editingItem?.row}; {editAmount || '0'}; 0)
+                    Fórmula en Columna F: =IF(G{editingItem?.row}; {String(editAmount || '0').replace('.', ',')}; 0)
                   </p>
                 </div>
 
