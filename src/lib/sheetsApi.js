@@ -713,25 +713,33 @@ function computeConsolidatedSummary(monthlyData) {
 }
 
 /**
+ * Obtiene los datos cacheados del Panel de Control de inmediato (0ms)
+ */
+export function getCachedControlPanelData() {
+  const cached = getCacheEntry('control_panel_data')
+  if (cached?.monthlyData && Array.isArray(cached.monthlyData)) {
+    return cached
+  }
+  return DEFAULT_CONTROL_PANEL_DATA
+}
+
+/**
  * Obtiene los datos consolidados del Panel de Control.
  * Realiza múltiples capas de comprobación:
- * 1. Intenta la acción dedicada 'getControlPanelData'.
- * 2. Si falla o no incluye meses posteriores a Abril, consulta en paralelo
- *    las hojas de todos los 12 meses usando 'getSummary', garantizando que ningún
- *    mes quede fuera aunque no se haya redesplegado el script.
+ * 1. Si no se fuerza refresco y hay caché en memoria, lo devuelve al instante.
+ * 2. Consulta la acción rápida 'getControlPanelData'.
+ * 3. Si falla la acción rápida, consulta en paralelo las hojas con 'getSummary'.
  */
 export async function getControlPanelData(forceRefresh = false) {
   const cached = getCacheEntry('control_panel_data')
-  // Comprobar si el caché actual tiene meses con datos más allá de Abril
-  const cachedHasMonthsBeyondApril = cached?.monthlyData?.some((d) => d.monthIndex > 3 && d.hasData)
 
-  if (!forceRefresh && cached?.monthlyData && cachedHasMonthsBeyondApril) {
+  if (!forceRefresh && cached?.monthlyData && Array.isArray(cached.monthlyData)) {
     return cached
   }
 
   let liveData = null
 
-  // Intento 1: Acción directa del Apps Script
+  // Intento 1: Acción directa y rápida del Apps Script
   try {
     const res = await callApi({
       action: 'getControlPanelData'
@@ -739,18 +747,11 @@ export async function getControlPanelData(forceRefresh = false) {
 
     if (res?.monthlyData && Array.isArray(res.monthlyData) && res.monthlyData.length > 0) {
       liveData = res
+      setCacheEntry('control_panel_data', liveData)
+      return liveData
     }
   } catch (err) {
     console.warn('Acción getControlPanelData no disponible o fallida, usando agregación por meses:', err.message)
-  }
-
-  // Verificar si liveData tiene meses más allá de Abril
-  const liveHasMonthsBeyondApril = liveData?.monthlyData?.some((d) => d.monthIndex > 3 && d.hasData)
-
-  // Si liveData ya contiene datos completos más allá de Abril, guardamos y retornamos
-  if (liveData && liveHasMonthsBeyondApril) {
-    setCacheEntry('control_panel_data', liveData)
-    return liveData
   }
 
   // Intento 2: Cargar o verificar todos los 12 meses directamente de las hojas
@@ -767,7 +768,7 @@ export async function getControlPanelData(forceRefresh = false) {
     const results = await Promise.allSettled(summariesPromises)
 
     // Base mensual a combinar
-    const baseList = liveData?.monthlyData || DEFAULT_CONTROL_PANEL_DATA.monthlyData
+    const baseList = liveData?.monthlyData || cached?.monthlyData || DEFAULT_CONTROL_PANEL_DATA.monthlyData
 
     const mergedMonthly = ALL_MONTHS.map((m, i) => {
       const existing = baseList.find((d) => d.month === m) || {}

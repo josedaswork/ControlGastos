@@ -20,6 +20,8 @@ import { toast } from 'sonner'
 export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSummaryUpdate, onClose }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
+  const [isUsingCache, setIsUsingCache] = useState(false)
+  const [backgroundSyncing, setBackgroundSyncing] = useState(false)
   const [syncingRow, setSyncingRow] = useState(null)
   const [batchSyncing, setBatchSyncing] = useState(false)
   const [error, setError] = useState(null)
@@ -35,13 +37,19 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
   useEffect(() => {
     let isMounted = true
     const cached = getCachedFixedExpenses(month)
+    const hasCache = !!(cached?.fixedExpenses && cached.fixedExpenses.length > 0)
 
-    if (cached?.fixedExpenses?.length > 0) {
+    if (hasCache) {
       setItems(sanitizeAndMergeFixedExpenses([], cached.fixedExpenses))
+      setIsUsingCache(true)
       setLoading(false)
+      setBackgroundSyncing(true)
     } else {
       // Precarga inmediata de las 8 categorías oficiales de la plantilla
       setItems(sanitizeAndMergeFixedExpenses([], []))
+      setIsUsingCache(false)
+      setLoading(true)
+      setBackgroundSyncing(true)
     }
 
     async function loadData() {
@@ -52,13 +60,17 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
         if (res?.fixedExpenses) {
           setItems(sanitizeAndMergeFixedExpenses([], res.fixedExpenses))
         }
+        setIsUsingCache(false)
       } catch (err) {
         if (!isMounted) return
-        if (!cached?.fixedExpenses?.length) {
+        if (!hasCache) {
           setError(err.message || 'Error al cargar los gastos fijos')
         }
       } finally {
-        if (isMounted) setLoading(false)
+        if (isMounted) {
+          setLoading(false)
+          setBackgroundSyncing(false)
+        }
       }
     }
 
@@ -70,6 +82,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
 
   const handleRefresh = async () => {
     setLoading(true)
+    setBackgroundSyncing(true)
     setError(null)
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
     try {
@@ -80,12 +93,14 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
       if (res?.summary && onSummaryUpdate) {
         onSummaryUpdate(res.summary.fixedExpenses, res.summary)
       }
+      setIsUsingCache(false)
       toast.success('Gastos fijos actualizados')
     } catch (err) {
       setError(err.message || 'Error al actualizar')
       toast.error('Error al actualizar: ' + err.message)
     } finally {
       setLoading(false)
+      setBackgroundSyncing(false)
     }
   }
 
@@ -269,11 +284,17 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
               <Lock className="w-5 h-5 stroke-[2.2]" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <h2 className="text-base font-bold text-slate-900">Gastos Fijos</h2>
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100/70 text-amber-800 border border-amber-200/60">
                   {month}
                 </span>
+                {isUsingCache && backgroundSyncing && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/90 px-2 py-0.5 rounded-full shadow-2xs">
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-600" />
+                    <span>datos cacheados</span>
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500">
                 Marca la casilla para computar el gasto en el mes
@@ -294,11 +315,11 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
             <button
               type="button"
               onClick={handleRefresh}
-              disabled={loading || repairing}
+              disabled={loading || backgroundSyncing || repairing}
               aria-label="Actualizar gastos fijos"
               className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200/80 text-slate-500 hover:text-slate-700 flex items-center justify-center transition-colors disabled:opacity-50"
             >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-amber-600' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${(loading || backgroundSyncing) ? 'animate-spin text-amber-600' : ''}`} />
             </button>
             <button
               type="button"

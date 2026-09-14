@@ -57,6 +57,7 @@ function App() {
   const [expenses, setExpenses] = useState([])
   const [categories, setCategories] = useState([])
   const [loading, setLoading] = useState(false)
+  const [isUsingCache, setIsUsingCache] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
   const [showIncomeModal, setShowIncomeModal] = useState(false)
   const [showSavingsGoalModal, setShowSavingsGoalModal] = useState(false)
@@ -81,8 +82,11 @@ function App() {
     // Show cached data instantly, or clear old month's data
     const cachedSummary = getCachedSummary(monthName)
     const cachedExpenses = getCachedExpenses(monthName)
-    setSummary(cachedSummary || null)
-    setExpenses(cachedExpenses?.expenses || [])
+    const hasCache = !!(cachedSummary || (cachedExpenses?.expenses && cachedExpenses.expenses.length > 0))
+
+    if (cachedSummary) setSummary(cachedSummary)
+    if (cachedExpenses?.expenses) setExpenses(cachedExpenses.expenses)
+    setIsUsingCache(hasCache)
 
     // Then refresh from server in background
     setLoading(true)
@@ -95,10 +99,13 @@ function App() {
       if (currentLoadId !== loadIdRef.current) return
       setSummary(s)
       setExpenses(e.expenses || [])
+      setIsUsingCache(false)
     } catch (err) {
       if (currentLoadId !== loadIdRef.current) return
       if (!cachedSummary && !cachedExpenses) {
         toast.error('Error cargando datos: ' + err.message)
+      } else {
+        toast.info('Sin conexión con Sheets. Mostrando datos cacheados.', { duration: 2500 })
       }
     } finally {
       if (currentLoadId === loadIdRef.current) setLoading(false)
@@ -291,10 +298,10 @@ function App() {
         toast.error(`${failed} gasto(s) no se pudieron sincronizar`)
       }
       if (synced === 0 && failed === 0) {
-        toast.info('Nada pendiente de sincronizar')
+        toast.info('Sincronizando con Google Sheets...')
       }
       setPendingCount(getPendingExpenses().length)
-      if (synced > 0) loadData()
+      await loadData()
     } catch (err) {
       toast.error('Error sincronizando: ' + err.message)
     } finally {
@@ -369,23 +376,40 @@ function App() {
               <h1 className="text-lg font-black tracking-tight text-slate-900 leading-tight">
                 Control Gastos
               </h1>
-              <button
-                type="button"
-                onClick={() => setFinalizeModalMonth(selectedMonth)}
-                className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 hover:text-slate-800 transition-colors group cursor-pointer"
-                title="Haz clic para ver opciones o finalizar este mes"
-              >
-                <span>{monthName} 2026</span>
-                {finalizedMonths.includes(selectedMonth) ? (
-                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded-full border border-emerald-300">
-                    ✓ Finalizado
-                  </span>
-                ) : selectedMonth === effectiveCurrentMonth ? (
-                  <span className="text-[10px] font-semibold text-primary bg-primary/10 px-1.5 py-0.2 rounded-full">
-                    En curso
-                  </span>
-                ) : null}
-              </button>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setFinalizeModalMonth(selectedMonth)}
+                  className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 hover:text-slate-800 transition-colors group cursor-pointer"
+                  title="Haz clic para ver opciones o finalizar este mes"
+                >
+                  <span>{monthName} 2026</span>
+                  {finalizedMonths.includes(selectedMonth) ? (
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded-full border border-emerald-300">
+                      ✓ Finalizado
+                    </span>
+                  ) : selectedMonth === effectiveCurrentMonth ? (
+                    <span className="text-[10px] font-semibold text-primary bg-primary/10 px-1.5 py-0.2 rounded-full">
+                      En curso
+                    </span>
+                  ) : null}
+                </button>
+
+                <AnimatePresence>
+                  {isUsingCache && loading && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.85 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.85 }}
+                      title="Mostrando datos de la memoria caché mientras se sincroniza con Google Sheets"
+                      className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/90 px-2 py-0.5 rounded-full shadow-2xs"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-600" />
+                      <span>datos cacheados</span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
           </div>
 

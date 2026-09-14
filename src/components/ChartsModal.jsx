@@ -27,31 +27,34 @@ import {
   CartesianGrid,
   Legend
 } from 'recharts'
-import { getControlPanelData } from '@/lib/sheetsApi'
+import { getControlPanelData, getCachedControlPanelData } from '@/lib/sheetsApi'
 import { fmt } from '@/lib/utils'
 import { toast } from 'sonner'
 
 export default function ChartsModal({ isOpen, onClose }) {
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [data, setData] = useState(() => getCachedControlPanelData())
+  const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [isUsingCache, setIsUsingCache] = useState(true)
   const [expandedChart, setExpandedChart] = useState(null) // null | 'incomeVsExpenses' | 'fixedVsVariable'
   const [showOnlyActive, setShowOnlyActive] = useState(false)
 
   const loadData = async (force = false) => {
-    if (force) setRefreshing(true)
-    else setLoading(true)
+    setRefreshing(true)
 
     try {
       const res = await getControlPanelData(force)
       if (res?.monthlyData) {
         setData(res)
       }
-      if (force) {
+      setIsUsingCache(false)
+      if (force && !isUsingCache) {
         toast.success('Datos actualizados desde Google Sheets')
       }
     } catch (err) {
-      toast.error('Error al cargar datos del Panel de control: ' + err.message)
+      if (!data?.monthlyData) {
+        toast.error('Error al cargar datos del Panel de control: ' + err.message)
+      }
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -60,7 +63,15 @@ export default function ChartsModal({ isOpen, onClose }) {
 
   useEffect(() => {
     if (isOpen) {
-      loadData(false)
+      const cached = getCachedControlPanelData()
+      if (cached?.monthlyData && cached.monthlyData.length > 0) {
+        setData(cached)
+        setIsUsingCache(true)
+        setLoading(false)
+      } else {
+        setLoading(true)
+      }
+      loadData(true)
     }
   }, [isOpen])
 
@@ -184,9 +195,17 @@ export default function ChartsModal({ isOpen, onClose }) {
                 <BarChart3 className="w-4 h-4" />
               </div>
               <div>
-                <h2 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight leading-snug">
-                  Panel de Control — Gráficos 2026
-                </h2>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <h2 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight leading-snug">
+                    Panel de Control — Gráficos 2026
+                  </h2>
+                  {isUsingCache && (refreshing || loading) && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/90 px-2 py-0.5 rounded-full shadow-2xs">
+                      <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-600" />
+                      <span>datos cacheados</span>
+                    </span>
+                  )}
+                </div>
                 <p className="text-[11px] text-slate-500 font-medium">
                   Datos consolidados de la pestaña <span className="font-semibold text-slate-700">Panel de control</span>
                 </p>
