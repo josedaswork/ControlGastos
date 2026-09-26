@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Toaster, toast } from 'sonner'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
-import { RefreshCw, Plus, Settings, WalletCards, AlertTriangle, ArrowUpRight } from 'lucide-react'
+import { RefreshCw, Plus, Settings, WalletCards, AlertTriangle, ArrowUpRight, Bug } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Button } from '@/components/ui/button'
 import { fmt } from '@/lib/utils'
@@ -12,7 +12,10 @@ import {
   getCategories as fetchCategories,
   getExpenses as fetchExpenses,
   getSummary as fetchSummary,
+  getMonthData,
+  reconcilePendingExpenses,
   addExpenseDirect,
+  addIncomeDirect as apiAddIncome,
   addToPending,
   updateExpense as apiUpdateExpense,
   deleteExpense as apiDeleteExpense,
@@ -26,7 +29,10 @@ import {
   getCachedSummary,
   getCachedExpenses,
   getCachedCategories,
+  getCachedIncomeCategories,
+  normalizeScriptUrl,
 } from '@/lib/sheetsApi'
+import { isDebugEnabled, subscribeLogs } from '@/lib/debugLogger'
 import MonthSelector from '@/components/MonthSelector'
 import MonthlySummary from '@/components/MonthlySummary'
 import ExpenseList from '@/components/ExpenseList'
@@ -38,6 +44,7 @@ import FixedExpensesModal from '@/components/FixedExpensesModal'
 import FinalizeMonthModal from '@/components/FinalizeMonthModal'
 import ChartsModal from '@/components/ChartsModal'
 import SetupScreen from '@/components/SetupScreen'
+import DebugLogViewer from '@/components/DebugLogViewer'
 import {
   MONTHS,
   getFinalizedMonths,
@@ -56,6 +63,7 @@ function App() {
   const [summary, setSummary] = useState(null)
   const [expenses, setExpenses] = useState([])
   const [categories, setCategories] = useState([])
+  const [incomeCategories, setIncomeCategories] = useState(() => getCachedIncomeCategories())
   const [loading, setLoading] = useState(false)
   const [isUsingCache, setIsUsingCache] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
@@ -68,38 +76,85 @@ function App() {
   const [pendingCount, setPendingCount] = useState(getPendingExpenses().length)
   const [syncing, setSyncing] = useState(false)
   const [sendingExpenses, setSendingExpenses] = useState([])
+  const [debugActive, setDebugActive] = useState(() => isDebugEnabled())
+  const [debugErrorCount, setDebugErrorCount] = useState(0)
+  const [showDebugModal, setShowDebugModal] = useState(false)
   const queueRef = useRef([])
   const processingRef = useRef(false)
   const loadIdRef = useRef(0)
 
+  useEffect(() => {
+    const unsub = subscribeLogs((currentLogs) => {
+      setDebugActive(isDebugEnabled())
+      const errs = currentLogs.filter((l) => l.status === 'error').length
+      setDebugErrorCount(errs)
+    })
+    return () => unsub()
+  }, [])
+
   const monthName = MONTHS[selectedMonth]
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (force = false) => {
     if (!scriptUrl) return
 
     const currentLoadId = ++loadIdRef.current
 
-    // Show cached data instantly, or clear old month's data
+    // Show cached data instantly, or reset for the new month to avoid showing old month's data
     const cachedSummary = getCachedSummary(monthName)
     const cachedExpenses = getCachedExpenses(monthName)
     const hasCache = !!(cachedSummary || (cachedExpenses?.expenses && cachedExpenses.expenses.length > 0))
 
-    if (cachedSummary) setSummary(cachedSummary)
-    if (cachedExpenses?.expenses) setExpenses(cachedExpenses.expenses)
+    if (cachedSummary) {
+      setSummary(cachedSummary)
+    } else {
+      setSummary({
+        month: monthName,
+        income: 0,
+        fixedExpenses: 0,
+        variableExpenses: 0,
+        desiredSavings: 0,
+        totalExpenses: 0,
+        remainingMonth: 0,
+        savings: 0,
+      })
+    }
+
+    if (cachedExpenses?.expenses) {
+      setExpenses(cachedExpenses.expenses)
+    } else {
+      setExpenses([])
+    }
+
     setIsUsingCache(hasCache)
 
-    // Then refresh from server in background
-    setLoading(true)
+    // Solo comprobar si el número de filas coincide con las guardadas en caché
+    const knownRowCount = (!force && cachedExpenses?.lastRow) ? cachedExpenses.lastRow : null
+
+    // Carga rápida en segundo plano (~80ms si el número de filas no ha cambiado)
+    setLoading(!hasCache)
     try {
-      const [s, e] = await Promise.all([
-        fetchSummary(monthName),
-        fetchExpenses(monthName),
-      ])
+      const monthData = await getMonthData(monthName, knownRowCount)
+
       // Discard if month changed while fetching
       if (currentLoadId !== loadIdRef.current) return
-      setSummary(s)
-      setExpenses(e.expenses || [])
+
+      if (monthData?.unchanged) {
+        // El número de filas coincide con las guardadas en Sheets, los datos no han cambiado
+        setIsUsingCache(false)
+        setLoading(false)
+        return
+      }
+
+      if (monthData?.summary) {
+        setSummary(monthData.summary)
+      }
+      const serverExpenses = monthData?.expenses || []
+      setExpenses(serverExpenses)
       setIsUsingCache(false)
+
+      // Reconcile pending expenses to avoid duplicates
+      reconcilePendingExpenses(monthName, serverExpenses)
+      setPendingCount(getPendingExpenses().length)
     } catch (err) {
       if (currentLoadId !== loadIdRef.current) return
       if (!cachedSummary && !cachedExpenses) {
@@ -110,7 +165,6 @@ function App() {
     } finally {
       if (currentLoadId === loadIdRef.current) setLoading(false)
     }
-    setPendingCount(getPendingExpenses().length)
   }, [scriptUrl, monthName])
 
   const loadCategories = useCallback(async () => {
@@ -123,12 +177,17 @@ function App() {
     } else {
       setCategories((prev) => prev.length > 0 ? prev : DEFAULT_CATEGORIES)
     }
+    if (cachedCategories?.incomeCategories?.length > 0) {
+      setIncomeCategories(cachedCategories.incomeCategories)
+    }
 
     try {
       const data = await fetchCategories()
       if (data.categories?.length > 0) {
         setCategories(data.categories)
-        return
+      }
+      if (data.incomeCategories?.length > 0) {
+        setIncomeCategories(data.incomeCategories)
       }
     } catch (err) {
       console.warn('Error refrescando categorías en background:', err.message)
@@ -144,16 +203,74 @@ function App() {
     if (categories.length === 0) loadCategories()
   }
 
-  const handleAddExpense = (category, amount) => {
+  const handleAddExpense = async (category, amount, type = 'expense') => {
     const cleanCat = String(category || '').trim()
+    setShowAddModal(false)
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+
+    // Caso 1: Ingreso (+)
+    if (type === 'income') {
+      const incCat = cleanCat || 'Euromar'
+      const previousSummary = summary
+      // Actualización optimista inmediata en UI
+      setSummary((prev) => {
+        const inc = (prev?.income || 0) + amount
+        const fixed = prev?.fixedExpenses || 0
+        const variable = prev?.variableExpenses || 0
+        const savingsGoal = prev?.desiredSavings || 0
+        const rem = inc - fixed - variable - savingsGoal
+        return {
+          ...prev,
+          month: monthName,
+          income: inc,
+          remainingMonth: rem,
+          savings: rem,
+        }
+      })
+
+      const toastId = toast.loading(`Guardando ingreso "${incCat}" (${fmt(amount)})...`)
+      try {
+        const res = await apiAddIncome(monthName, incCat, amount)
+        Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+        toast.success(`Ingreso "${incCat}" añadido a la columna de ingresos`, { id: toastId })
+        if (res?.summary) {
+          setSummary(res.summary)
+        }
+      } catch (err) {
+        if (previousSummary) {
+          setSummary(previousSummary)
+        }
+        toast.error('Error al guardar ingreso: ' + err.message, { id: toastId, duration: 4000 })
+      }
+      return
+    }
+
+    // Caso 2: Gasto variable (-)
     if (cleanCat) {
       setCategories((prev) => (prev.includes(cleanCat) ? prev : [...prev, cleanCat]))
     }
+
+    // Actualización optimista de resumen en UI
+    setSummary((prev) => {
+      const fixed = prev?.fixedExpenses || 0
+      const variable = (prev?.variableExpenses || 0) + amount
+      const total = fixed + variable
+      const inc = prev?.income || 0
+      const savingsGoal = prev?.desiredSavings || 0
+      const rem = inc - total - savingsGoal
+      return {
+        ...prev,
+        month: monthName,
+        variableExpenses: variable,
+        totalExpenses: total,
+        remainingMonth: rem,
+        savings: rem,
+      }
+    })
+
     const expense = { id: `q_${Date.now()}_${Math.random().toString(36).slice(2)}`, month: monthName, category: cleanCat, amount }
     queueRef.current = [...queueRef.current, expense]
     setSendingExpenses([...queueRef.current])
-    setShowAddModal(false)
-    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
     toast('Enviando gasto...', { icon: '📤', duration: 1500 })
     processQueue()
   }
@@ -165,10 +282,14 @@ function App() {
     while (queueRef.current.length > 0) {
       const item = queueRef.current[0]
       try {
-        await addExpenseDirect(item.month, item.category, item.amount)
+        const res = await addExpenseDirect(item.month, item.category, item.amount)
         queueRef.current = queueRef.current.slice(1)
         setSendingExpenses([...queueRef.current])
         toast.success(`"${item.category}" añadido`)
+        if (item.month === monthName) {
+          if (res?.summary) setSummary(res.summary)
+          if (res?.expenses) setExpenses(res.expenses)
+        }
       } catch {
         addToPending(item.month, item.category, item.amount)
         queueRef.current = queueRef.current.slice(1)
@@ -179,7 +300,6 @@ function App() {
     }
 
     processingRef.current = false
-    loadData()
   }
 
   const handleEditExpense = async (expense, newCategory, newAmount) => {
@@ -190,10 +310,12 @@ function App() {
     }
     const toastId = toast.loading('Actualizando gasto...')
     try {
-      await apiUpdateExpense(monthName, expense.row, expense.category, expense.amount, cleanCat, newAmount)
+      const res = await apiUpdateExpense(monthName, expense.row, expense.category, expense.amount, cleanCat, newAmount)
       Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
       toast.success('Gasto actualizado', { id: toastId })
-      loadData()
+      if (res?.summary) setSummary(res.summary)
+      if (res?.expenses) setExpenses(res.expenses)
+      else loadData()
     } catch (err) {
       toast.error('Error actualizando: ' + err.message, { id: toastId })
     }
@@ -209,22 +331,29 @@ function App() {
     setDeletingExpense(null)
     const toastId = toast.loading('Eliminando gasto...')
     try {
-      await apiDeleteExpense(monthName, expense.row, expense.category, expense.amount)
+      const res = await apiDeleteExpense(monthName, expense.row, expense.category, expense.amount)
       Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
       toast.success('Gasto eliminado', { id: toastId })
-      loadData()
+      if (res?.summary) setSummary(res.summary)
+      if (res?.expenses) setExpenses(res.expenses)
+      else loadData()
     } catch (err) {
       toast.error('Error eliminando: ' + err.message, { id: toastId })
     }
   }
 
   const handleSaveIncome = async (newAmount) => {
-    // Optimistic UI update
+    const previousSummary = summary
+
+    // Immediate Optimistic UI update
     setSummary((prev) => {
-      if (!prev) return prev
-      const rem = newAmount - (prev.fixedExpenses || 0) - (prev.variableExpenses || 0) - (prev.desiredSavings || 0)
+      const fixed = prev?.fixedExpenses || 0
+      const variable = prev?.variableExpenses || 0
+      const savingsGoal = prev?.desiredSavings || 0
+      const rem = newAmount - fixed - variable - savingsGoal
       return {
         ...prev,
+        month: monthName,
         income: newAmount,
         remainingMonth: rem,
         savings: rem,
@@ -233,23 +362,32 @@ function App() {
 
     const toastId = toast.loading('Guardando ingresos en Sheets...')
     try {
-      await apiSetTotalIncome(monthName, newAmount)
+      const res = await apiSetTotalIncome(monthName, newAmount)
       Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
       toast.success(`Ingresos de ${monthName} actualizados a ${fmt(newAmount)}`, { id: toastId })
-      loadData()
+      if (res?.summary) {
+        setSummary(res.summary)
+      }
     } catch (err) {
-      toast.error('Error actualizando ingresos: ' + err.message, { id: toastId })
-      loadData()
+      if (previousSummary) {
+        setSummary(previousSummary)
+      }
+      toast.error('Error actualizando ingresos: ' + err.message, { id: toastId, duration: 5000 })
     }
   }
 
   const handleSaveSavingsGoal = async (newGoal) => {
-    // Optimistic UI update
+    const previousSummary = summary
+
+    // Immediate Optimistic UI update
     setSummary((prev) => {
-      if (!prev) return prev
-      const rem = (prev.income || 0) - (prev.fixedExpenses || 0) - (prev.variableExpenses || 0) - newGoal
+      const inc = prev?.income || 0
+      const fixed = prev?.fixedExpenses || 0
+      const variable = prev?.variableExpenses || 0
+      const rem = inc - fixed - variable - newGoal
       return {
         ...prev,
+        month: monthName,
         desiredSavings: newGoal,
         remainingMonth: rem,
         savings: rem,
@@ -258,13 +396,17 @@ function App() {
 
     const toastId = toast.loading('Guardando meta de ahorro...')
     try {
-      await apiSetSavingsGoal(monthName, newGoal)
+      const res = await apiSetSavingsGoal(monthName, newGoal)
       Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
       toast.success(`Meta de ahorro de ${monthName} actualizada a ${fmt(newGoal)}`, { id: toastId })
-      loadData()
+      if (res?.summary) {
+        setSummary(res.summary)
+      }
     } catch (err) {
-      toast.error('Error actualizando meta: ' + err.message, { id: toastId })
-      loadData()
+      if (previousSummary) {
+        setSummary(previousSummary)
+      }
+      toast.error('Error actualizando meta: ' + err.message, { id: toastId, duration: 5000 })
     }
   }
 
@@ -301,7 +443,7 @@ function App() {
         toast.info('Sincronizando con Google Sheets...')
       }
       setPendingCount(getPendingExpenses().length)
-      await loadData()
+      await loadData(true)
     } catch (err) {
       toast.error('Error sincronizando: ' + err.message)
     } finally {
@@ -310,9 +452,10 @@ function App() {
   }
 
   const handleSetupSave = (url) => {
-    if (url !== scriptUrl) clearAllCache()
-    saveScriptUrl(url)
-    setScriptUrl(url)
+    const cleanUrl = normalizeScriptUrl(url)
+    if (cleanUrl !== scriptUrl) clearAllCache()
+    saveScriptUrl(cleanUrl)
+    setScriptUrl(cleanUrl)
     setSpreadsheetUrl(getSpreadsheetUrl())
     setShowSetup(false)
   }
@@ -332,7 +475,21 @@ function App() {
     }
   }
 
-  const pendingForMonth = useMemo(() => getPendingForMonth(monthName), [monthName, pendingCount])
+  const pendingForMonth = useMemo(() => {
+    const list = getPendingForMonth(monthName)
+    // Filtrar elementos pendientes que ya figuren en los gastos del servidor
+    // para evitar que se visualicen duplicados
+    return list.filter((pe) => {
+      const peAmt = parseFloat(String(pe.amount).replace(',', '.')) || 0
+      const peCat = String(pe.category || '').trim().toLowerCase()
+      const alreadyInExpenses = expenses.some((e) => {
+        const eAmt = parseFloat(String(e.amount).replace(',', '.')) || 0
+        const eCat = String(e.category || '').trim().toLowerCase()
+        return eCat === peCat && Math.abs(eAmt - peAmt) < 0.01
+      })
+      return !alreadyInExpenses
+    })
+  }, [monthName, pendingCount, expenses])
   const sendingForMonth = useMemo(() => sendingExpenses.filter((e) => e.month === monthName), [sendingExpenses, monthName])
 
   if (showSetup) {
@@ -452,6 +609,30 @@ function App() {
               )}
             </motion.button>
 
+            {/* Quick Debug Button (Only if DEBUG is enabled in settings) */}
+            {debugActive && (
+              <motion.button
+                type="button"
+                onClick={() => {
+                  Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+                  setShowDebugModal(true)
+                }}
+                whileTap={{ scale: 0.88 }}
+                aria-label="Ver registros de tareas (DEBUG)"
+                title="Modo DEBUG activo: ver registro de tareas y errores"
+                className="relative w-10 h-10 rounded-2xl bg-violet-50 border border-violet-200/80 shadow-xs hover:bg-violet-100 flex items-center justify-center text-violet-700 transition-colors"
+              >
+                <Bug className="h-4 w-4" />
+                {debugErrorCount > 0 ? (
+                  <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] font-bold flex items-center justify-center shadow-xs animate-pulse">
+                    {debugErrorCount}
+                  </span>
+                ) : (
+                  <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white" />
+                )}
+              </motion.button>
+            )}
+
             {/* Settings Button */}
             <motion.button
               type="button"
@@ -538,6 +719,7 @@ function App() {
         {showAddModal && (
           <AddExpenseModal
             categories={categories}
+            incomeCategories={incomeCategories}
             onAdd={handleAddExpense}
             onClose={() => setShowAddModal(false)}
           />
@@ -669,6 +851,11 @@ function App() {
         isOpen={showChartsModal}
         onClose={() => setShowChartsModal(false)}
       />
+
+      {/* Debug Log Viewer Modal */}
+      {showDebugModal && (
+        <DebugLogViewer onClose={() => setShowDebugModal(false)} />
+      )}
 
       <Toaster position="top-center" theme="light" richColors />
     </div>

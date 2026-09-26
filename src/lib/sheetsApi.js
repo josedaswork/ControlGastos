@@ -1,16 +1,78 @@
+import { isDebugEnabled, startTask, logTask } from './debugLogger'
+
 const STORAGE_KEY = 'sheets_script_url'
 const SPREADSHEET_URL_STORAGE_KEY = 'sheets_spreadsheet_url'
 const DATA_CACHE_KEY = 'sheets_data_cache'
 const PENDING_KEY = 'sheets_pending_expenses'
 
+export { isDebugEnabled, logTask, startTask } from './debugLogger'
+
 export const DEFAULT_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1KLn5Ow_eoclIyx2LB0P89JC7vwmNSRV60iBjNepoJjA/edit'
 
+export function normalizeScriptUrl(inputUrl) {
+  if (!inputUrl || typeof inputUrl !== 'string') return ''
+  let url = inputUrl.trim()
+  url = url.replace(/^["']|["']$/g, '')
+  url = url.replace(/script\.google\.com\/(?:macros\/)?u\/\d+\/(?:macros\/)?/, 'script.google.com/macros/')
+  url = url.split('?')[0]
+  url = url.replace(/\/+$/, '')
+  return url
+}
+
+export function validateScriptUrl(url) {
+  if (!url || typeof url !== 'string' || !url.trim()) {
+    return { valid: false, error: 'Debes introducir una URL de Google Apps Script' }
+  }
+  const clean = normalizeScriptUrl(url)
+
+  if (clean.includes('docs.google.com/spreadsheets')) {
+    return {
+      valid: false,
+      error: 'Has introducido el enlace a la hoja de Google Sheets en vez de la Aplicación Web. Sigue los pasos: Extensiones → Apps Script → Implementar → Aplicación Web y copia la URL terminada en "/exec".',
+    }
+  }
+
+  if (
+    clean.includes('/edit') ||
+    clean.includes('/view') ||
+    clean.includes('script.google.com/home/projects') ||
+    clean.includes('script.google.com/d/')
+  ) {
+    return {
+      valid: false,
+      error: 'Has pegado la URL del editor de Apps Script. Pulsa el botón azul "Implementar" → "Nueva implementación" (o Administrar implementaciones) → selecciona "Aplicación web", acceso "Cualquier persona" y copia la URL terminada en "/exec".',
+    }
+  }
+
+  if (!clean.includes('script.google.com/macros/s/')) {
+    return {
+      valid: false,
+      error: 'La URL debe ser de Google Apps Script Web App (ejemplo: https://script.google.com/macros/s/.../exec).',
+    }
+  }
+
+  if (!clean.endsWith('/exec') && !clean.endsWith('/dev')) {
+    return {
+      valid: false,
+      error: 'La URL de la Aplicación Web debe terminar en "/exec". Comprueba que no esté cortada.',
+    }
+  }
+
+  return { valid: true, url: clean }
+}
+
 export function getScriptUrl() {
-  return localStorage.getItem(STORAGE_KEY) || ''
+  const raw = localStorage.getItem(STORAGE_KEY) || ''
+  return normalizeScriptUrl(raw)
 }
 
 export function setScriptUrl(url) {
-  localStorage.setItem(STORAGE_KEY, url)
+  if (url && typeof url === 'string') {
+    const cleaned = normalizeScriptUrl(url)
+    localStorage.setItem(STORAGE_KEY, cleaned)
+  } else {
+    localStorage.removeItem(STORAGE_KEY)
+  }
 }
 
 export function getSpreadsheetUrl() {
@@ -35,23 +97,139 @@ export const DEFAULT_CATEGORIES = [
 
 /* ---- Helpers ---- */
 
-async function callApi(params) {
-  const url = getScriptUrl()
-  if (!url) throw new Error('URL del script no configurada')
+export async function callApi(params, method = 'GET') {
+  const rawUrl = getScriptUrl()
+  if (!rawUrl) throw new Error('URL del script no configurada')
+  const baseUrl = normalizeScriptUrl(rawUrl)
 
-  const response = await fetch(url + '?' + new URLSearchParams(params), {
-    redirect: 'follow',
-  })
+  const task = isDebugEnabled()
+    ? startTask(params.action || 'api_call', params, `${params.action || 'Llamada API'} (${method})`)
+    : null
 
-  const text = await response.text()
+  let response
+  let text = ''
+
+  try {
+    if (method === 'POST') {
+      response = await fetch(baseUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(params),
+        redirect: 'follow',
+      })
+    } else {
+      const searchParams = new URLSearchParams({ ...params, _t: String(Date.now()) })
+      response = await fetch(`${baseUrl}?${searchParams.toString()}`, {
+        method: 'GET',
+        redirect: 'follow',
+      })
+    }
+    text = await response.text()
+  } catch (netErr) {
+    const errorMsg = 'No se pudo conectar con Google Sheets: ' + (netErr.message || 'Error de red')
+    if (task) task.endError(errorMsg, `Error de red en ${params.action || 'petición'}`)
+    throw new Error(errorMsg)
+  }
+
   let data
   try {
     data = JSON.parse(text)
   } catch {
-    throw new Error('Respuesta no válida del servidor')
+    console.warn('[Google Apps Script non-JSON response]:', text.slice(0, 160))
+
+    const isDriveErrorPage =
+      text.includes('<!DOCTYPE html>') ||
+      text.includes('Página no encontrada') ||
+      text.includes('No se puede abrir el archivo')
+
+    // Solo intentar rescate por POST si NO es una página 404 de Google Drive y el método era GET
+    if (
+      !isDriveErrorPage &&
+      method === 'GET' &&
+      params.action &&
+      !['ping', 'getMonthData', 'getExpenses', 'getSummary', 'getCategories'].includes(params.action)
+    ) {
+      try {
+        const postResult = await callApi(params, 'POST')
+        if (task) task.endSuccess(postResult, `${params.action} completado (vía POST fallback)`)
+        return postResult
+      } catch (_) {
+        // Continuar para extraer el error más informativo
+      }
+    }
+
+    let errorDetail = ''
+    if (text.includes('No se puede abrir el archivo') || text.includes('Página no encontrada')) {
+      errorDetail =
+        'URL de Apps Script inaccesible ("Página no encontrada"). Comprueba en Ajustes ⚙️: que termine en "/exec" y que en la implementación el acceso esté configurado en "Cualquier persona" (Anyone).'
+    } else if (text.includes('Exception:')) {
+      const match = text.match(/Exception:[^<\r\n]+/)
+      if (match) errorDetail = match[0].trim()
+    } else if (
+      text.includes('Authorization is required') ||
+      text.includes('accounts.google.com') ||
+      text.includes('Sign in') ||
+      text.includes('accounts.google.com/signin')
+    ) {
+      errorDetail =
+        'Permisos pendientes en Google Sheets: Abre tu hoja → Extensiones → Apps Script, autoriza los permisos y asegúrate de que el acceso sea "Cualquier usuario" (Anyone).'
+    } else if (text.includes('Script function not found')) {
+      errorDetail = 'Función no encontrada en el script remoto. Actualiza el código de Apps Script desde Ajustes ⚙️.'
+    } else if (text.includes('<title>')) {
+      const match = text.match(/<title>([^<]+)<\/title>/)
+      if (match && !match[1].toLowerCase().includes('error')) {
+        errorDetail = match[1].trim()
+      }
+    }
+
+    if (!errorDetail) {
+      const cleanSnippet = text
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 160)
+      if (cleanSnippet && !cleanSnippet.toLowerCase().includes('doctype')) {
+        errorDetail = cleanSnippet
+      }
+    }
+
+    const finalErrorMsg =
+      errorDetail ||
+      'El servidor de Google Sheets devolvió un error HTML. Copia el código actualizado desde Ajustes ⚙️ y vuelve a implementarlo en tu Apps Script.'
+
+    if (task) {
+      task.endError(finalErrorMsg, `Error HTML de Apps Script en ${params.action}`, text.slice(0, 300))
+    }
+
+    throw new Error(finalErrorMsg)
   }
 
-  if (data.error) throw new Error(data.error)
+  if (data.error) {
+    if (task) {
+      task.endError(data.error, `Error devuelto por Apps Script en ${params.action}`, data)
+    }
+    throw new Error(data.error)
+  }
+
+  if (task) {
+    const resSummary = {
+      status: data.status || 'ok',
+      month: data.month,
+      income: data.income,
+      summary: data.summary
+        ? {
+            income: data.summary.income,
+            fixed: data.summary.fixedExpenses,
+            variable: data.summary.variableExpenses,
+            remaining: data.summary.remainingMonth,
+          }
+        : undefined,
+      expensesCount: Array.isArray(data.expenses) ? data.expenses.length : undefined,
+    }
+    task.endSuccess(resSummary, `${params.action || 'Llamada'} exitosa`)
+  }
 
   // Guardar automáticamente la URL del spreadsheet si viene en la respuesta
   if (data.spreadsheetUrl) {
@@ -59,6 +237,70 @@ async function callApi(params) {
   }
 
   return data
+}
+
+export async function testConnection(urlToTest) {
+  const norm = normalizeScriptUrl(urlToTest)
+  const validation = validateScriptUrl(norm)
+  if (!validation.valid) {
+    if (isDebugEnabled()) {
+      logTask({
+        action: 'testConnection',
+        status: 'error',
+        title: 'Validación URL fallida',
+        error: validation.error,
+        params: { url: urlToTest },
+      })
+    }
+    throw new Error(validation.error)
+  }
+
+  const task = isDebugEnabled()
+    ? startTask('testConnection', { url: norm }, 'Comprobando conexión con Apps Script (ping)')
+    : null
+
+  const testUrl = `${norm}?action=ping&_t=${Date.now()}`
+  let response
+  let text = ''
+  try {
+    response = await fetch(testUrl, { method: 'GET', redirect: 'follow' })
+    text = await response.text()
+  } catch (err) {
+    const errorMsg = 'No se pudo conectar con el servidor: ' + (err.message || 'Error de conexión')
+    if (task) task.endError(errorMsg, 'Fallo de red en ping de conexión')
+    throw new Error(errorMsg)
+  }
+
+  let data
+  try {
+    data = JSON.parse(text)
+  } catch (_) {
+    let errStr = ''
+    if (text.includes('No se puede abrir el archivo') || text.includes('Página no encontrada')) {
+      errStr =
+        'Google devolvió "Página no encontrada". Verifica que la URL termine en "/exec" y que en la configuración de la implementación el acceso sea "Cualquier persona" (Anyone).'
+    } else if (text.includes('Authorization is required') || text.includes('accounts.google.com')) {
+      errStr =
+        'Permisos pendientes en Google Sheets. Abre tu hoja → Extensiones → Apps Script, autoriza los permisos y asegúrate de que el acceso sea "Cualquier persona".'
+    } else {
+      errStr =
+        'El script devolvió una respuesta no válida. Asegúrate de haber copiado el código completo de Apps Script y creado una Nueva Implementación como Aplicación Web.'
+    }
+
+    if (task) task.endError(errStr, 'Fallo de respuesta en testConnection', text.slice(0, 300))
+    throw new Error(errStr)
+  }
+
+  if (data?.error) {
+    if (task) task.endError(data.error, 'Apps Script devolvió error en testConnection', data)
+    throw new Error(data.error)
+  }
+
+  if (task) {
+    task.endSuccess(data, `Conexión verificada (Versión ${data.version || '3.0'})`)
+  }
+
+  return { success: true, data }
 }
 
 function getCacheStore() {
@@ -91,12 +333,17 @@ export function getCachedCategories() {
   return getCacheEntry('categories')
 }
 
+export function getCachedIncomeCategories() {
+  const cached = getCacheEntry('categories')
+  return cached?.incomeCategories || ['Euromar', 'Euromar Extra', 'Bizzum Tarjeta Rest', 'Bizz', 'Nómina', 'Extra']
+}
+
 /* ---- Categorías ---- */
 
 export async function getCategories() {
   try {
     const data = await callApi({ action: 'getCategories' })
-    if (data.categories?.length > 0) {
+    if (data.categories?.length > 0 || data.incomeCategories?.length > 0) {
       setCacheEntry('categories', data)
     }
     return data
@@ -112,6 +359,49 @@ export function clearAllCache() {
 }
 
 /* ---- Datos mensuales con caché offline ---- */
+
+export async function getMonthData(month, knownRowCount = null) {
+  try {
+    const payload = { action: 'getMonthData', month }
+    if (knownRowCount != null) payload.knownRowCount = String(knownRowCount)
+    const data = await callApi(payload)
+    if (data?.unchanged) {
+      return data
+    }
+    if (data?.summary) {
+      setCacheEntry('summary_' + month, data.summary)
+    }
+    if (data?.expenses) {
+      setCacheEntry('expenses_' + month, { expenses: data.expenses, month, lastRow: data.lastRow })
+    }
+    if (data?.incomes) {
+      setCacheEntry('incomes_' + month, { incomes: data.incomes, month })
+    }
+    if (data?.fixedExpenses) {
+      const safeList = sanitizeAndMergeFixedExpenses([], data.fixedExpenses)
+      const total = safeList.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+      setCacheEntry('fixed_expenses_' + month, {
+        month,
+        fixedExpenses: safeList,
+        totalActive: total,
+        hasCheckbox: data.hasCheckbox ?? true,
+      })
+    }
+    return data
+  } catch (err) {
+    // Si la acción unificada getMonthData no estuviera implementada en el Apps Script remoto,
+    // fallback transparente a llamadas individuales
+    const [summary, expenses] = await Promise.all([
+      getSummary(month),
+      getExpenses(month),
+    ])
+    return {
+      month,
+      summary,
+      expenses: expenses.expenses || [],
+    }
+  }
+}
 
 export async function getExpenses(month) {
   try {
@@ -149,50 +439,130 @@ function savePendingExpenses(list) {
   localStorage.setItem(PENDING_KEY, JSON.stringify(list))
 }
 
-export async function setSavingsGoal(month, amount) {
-  const parsed = parseFloat(String(amount).replace(',', '.'))
-  const result = await callApi({
-    action: 'setSavingsGoal',
-    month,
-    amount: String(parsed),
+export function reconcilePendingExpenses(month, serverExpenses = []) {
+  const pending = getPendingExpenses()
+  if (pending.length === 0 || !Array.isArray(serverExpenses) || serverExpenses.length === 0) return
+
+  let changed = false
+  const remaining = pending.filter((pe) => {
+    if (pe.month !== month) return true
+    const peAmt = parseFloat(String(pe.amount).replace(',', '.')) || 0
+    const peCat = String(pe.category || '').trim().toLowerCase()
+
+    const existsInServer = serverExpenses.some((se) => {
+      const seAmt = parseFloat(String(se.amount).replace(',', '.')) || 0
+      const seCat = String(se.category || '').trim().toLowerCase()
+      return seCat === peCat && Math.abs(seAmt - peAmt) < 0.01
+    })
+
+    if (existsInServer) {
+      changed = true
+      return false
+    }
+    return true
   })
 
-  // Invalidate or update cached summary for this month
-  const cacheKey = `summary_${month}`
-  const cached = getCacheEntry(cacheKey)
-  if (cached) {
-    const updatedSummary = {
-      ...cached,
-      desiredSavings: parsed,
-      remainingMonth: (cached.income || 0) - (cached.fixedExpenses || 0) - (cached.variableExpenses || 0) - parsed,
-    }
-    setCacheEntry(cacheKey, updatedSummary)
+  if (changed) {
+    savePendingExpenses(remaining)
   }
-
-  return result
 }
 
-export async function setTotalIncome(month, amount) {
+export async function setSavingsGoal(month, amount) {
   const parsed = parseFloat(String(amount).replace(',', '.'))
-  const result = await callApi({
+  if (isNaN(parsed) || parsed < 0) throw new Error('Meta de ahorro no válida')
+
+  const cacheKey = `summary_${month}`
+  const cached = getCacheEntry(cacheKey) || {}
+  const previousSummary = cached ? { ...cached } : null
+
+  const income = cached.income || 0
+  const fixed = cached.fixedExpenses || 0
+  const variable = cached.variableExpenses || 0
+  const remaining = income - fixed - variable - parsed
+  const updatedSummary = {
+    ...cached,
+    month,
+    desiredSavings: parsed,
+    remainingMonth: remaining,
+    savings: remaining,
+  }
+  setCacheEntry(cacheKey, updatedSummary)
+
+  try {
+    const result = await callApi({
+      action: 'setSavingsGoal',
+      month,
+      amount: String(parsed),
+    })
+
+    if (result?.summary) {
+      setCacheEntry(cacheKey, result.summary)
+    }
+
+    return result
+  } catch (err) {
+    if (previousSummary) {
+      setCacheEntry(cacheKey, previousSummary)
+    }
+    throw err
+  }
+}
+
+export async function setTotalIncome(month, amount, category) {
+  const parsed = parseFloat(String(amount).replace(',', '.'))
+  if (isNaN(parsed) || parsed < 0) throw new Error('Importe de ingresos no válido')
+
+  const cacheKey = `summary_${month}`
+  const cached = getCacheEntry(cacheKey) || {}
+  const previousSummary = cached ? { ...cached } : null
+
+  const fixed = cached.fixedExpenses || 0
+  const variable = cached.variableExpenses || 0
+  const desiredSavings = cached.desiredSavings || 0
+  const remaining = parsed - fixed - variable - desiredSavings
+  const updatedSummary = {
+    ...cached,
+    month,
+    income: parsed,
+    remainingMonth: remaining,
+    savings: remaining,
+  }
+  setCacheEntry(cacheKey, updatedSummary)
+
+  const payload = {
     action: 'setTotalIncome',
     month,
     amount: String(parsed),
-  })
-
-  // Invalidate or update cached summary for this month
-  const cacheKey = `summary_${month}`
-  const cached = getCacheEntry(cacheKey)
-  if (cached) {
-    const updatedSummary = {
-      ...cached,
-      income: parsed,
-      remainingMonth: parsed - (cached.fixedExpenses || 0) - (cached.variableExpenses || 0) - (cached.desiredSavings || 0),
-    }
-    setCacheEntry(cacheKey, updatedSummary)
+  }
+  if (category) {
+    payload.category = String(category).trim()
   }
 
-  return result
+  try {
+    const result = await callApi(payload)
+
+    if (result?.summary) {
+      const safeSummary = {
+        ...result.summary,
+        income: result.summary.income > 0 ? result.summary.income : parsed,
+        remainingMonth: (result.summary.income > 0 ? result.summary.income : parsed) - (result.summary.fixedExpenses || fixed) - (result.summary.variableExpenses || variable) - (result.summary.desiredSavings || desiredSavings),
+      }
+      setCacheEntry(cacheKey, safeSummary)
+      if (result.lastRow) {
+        const expKey = 'expenses_' + month
+        const cachedExp = getCacheEntry(expKey) || {}
+        setCacheEntry(expKey, { ...cachedExp, lastRow: result.lastRow })
+      }
+      return { ...result, summary: safeSummary }
+    }
+
+    return result
+  } catch (err) {
+    if (previousSummary) {
+      setCacheEntry(cacheKey, previousSummary)
+    }
+    throw err
+  }
 }
 
 export async function addExpenseDirect(month, category, amount) {
@@ -203,6 +573,16 @@ export async function addExpenseDirect(month, category, amount) {
     category: cleanCategory,
     amount: String(amount),
   })
+
+  if (result?.summary) {
+    setCacheEntry('summary_' + month, result.summary)
+  }
+  if (result?.expenses) {
+    setCacheEntry('expenses_' + month, { expenses: result.expenses, month, lastRow: result.lastRow })
+  }
+  if (result?.incomes) {
+    setCacheEntry('incomes_' + month, { incomes: result.incomes, month })
+  }
 
   // Add the newly used category to the local cache immediately
   if (cleanCategory) {
@@ -220,6 +600,44 @@ export async function addExpenseDirect(month, category, amount) {
   return result
 }
 
+export async function addIncomeDirect(month, category, amount) {
+  const cleanCategory = String(category || '').trim() || 'Euromar'
+  const parsedAmt = parseFloat(String(amount).replace(',', '.'))
+
+  // Invalidate or update cached summary immediately for 0ms latency
+  const summaryKey = 'summary_' + month
+  const cachedSum = getCacheEntry(summaryKey)
+  if (cachedSum) {
+    const updatedSum = {
+      ...cachedSum,
+      income: (cachedSum.income || 0) + parsedAmt,
+      remainingMonth: (cachedSum.remainingMonth || 0) + parsedAmt,
+      savings: (cachedSum.savings || 0) + parsedAmt,
+    }
+    setCacheEntry(summaryKey, updatedSum)
+  }
+
+  const result = await callApi({
+    action: 'addIncome',
+    month,
+    category: cleanCategory,
+    amount: String(parsedAmt),
+  })
+
+  if (result?.summary) {
+    setCacheEntry(summaryKey, result.summary)
+  }
+  if (result?.lastRow) {
+    const expensesKey = 'expenses_' + month
+    const cachedExp = getCacheEntry(expensesKey) || {}
+    setCacheEntry(expensesKey, { ...cachedExp, lastRow: result.lastRow })
+  }
+  if (result?.incomes) {
+    setCacheEntry('incomes_' + month, { incomes: result.incomes, month })
+  }
+  return result
+}
+
 export function addToPending(month, category, amount) {
   const pending = getPendingExpenses()
   pending.push({
@@ -227,6 +645,7 @@ export function addToPending(month, category, amount) {
     category: String(category || '').trim(),
     amount,
     id: Date.now() + Math.random(),
+    createdAt: Date.now(),
   })
   savePendingExpenses(pending)
 }
@@ -241,7 +660,7 @@ export function removePendingExpense(id) {
 }
 
 export async function updateExpense(month, row, oldCategory, oldAmount, newCategory, newAmount) {
-  return await callApi({
+  const result = await callApi({
     action: 'updateExpense',
     month,
     row: String(row),
@@ -250,16 +669,22 @@ export async function updateExpense(month, row, oldCategory, oldAmount, newCateg
     newCategory: String(newCategory || '').trim(),
     newAmount: String(newAmount),
   })
+  if (result?.summary) setCacheEntry('summary_' + month, result.summary)
+  if (result?.expenses) setCacheEntry('expenses_' + month, { expenses: result.expenses, month })
+  return result
 }
 
 export async function deleteExpense(month, row, category, amount) {
-  return await callApi({
+  const result = await callApi({
     action: 'deleteExpense',
     month,
     row: String(row),
     category: String(category || '').trim(),
     amount: String(amount),
   })
+  if (result?.summary) setCacheEntry('summary_' + month, result.summary)
+  if (result?.expenses) setCacheEntry('expenses_' + month, { expenses: result.expenses, month })
+  return result
 }
 
 export async function syncPendingExpenses() {
@@ -271,12 +696,32 @@ export async function syncPendingExpenses() {
 
   for (const expense of pending) {
     try {
-      await callApi({
+      // Evitar duplicar gastos si ya existen en las filas del mes (por ejemplo, si el request original
+      // se guardó en Google Sheets pero falló el acuse de recibo por corte de conexión)
+      const cached = getCachedExpenses(expense.month)
+      const serverList = cached?.expenses || []
+      const expAmt = parseFloat(String(expense.amount).replace(',', '.')) || 0
+      const expCat = String(expense.category || '').trim().toLowerCase()
+
+      const alreadyExists = serverList.some((se) => {
+        const seAmt = parseFloat(String(se.amount).replace(',', '.')) || 0
+        const seCat = String(se.category || '').trim().toLowerCase()
+        return seCat === expCat && Math.abs(seAmt - expAmt) < 0.01
+      })
+
+      if (alreadyExists) {
+        synced++
+        continue
+      }
+
+      const res = await callApi({
         action: 'addExpense',
         month: expense.month,
         category: String(expense.category || '').trim(),
         amount: String(expense.amount),
       })
+      if (res?.summary) setCacheEntry('summary_' + expense.month, res.summary)
+      if (res?.expenses) setCacheEntry('expenses_' + expense.month, { expenses: res.expenses, month: expense.month })
       synced++
     } catch {
       failed.push(expense)
@@ -284,6 +729,15 @@ export async function syncPendingExpenses() {
   }
 
   savePendingExpenses(failed)
+  if (isDebugEnabled()) {
+    logTask({
+      action: 'syncPendingExpenses',
+      status: failed.length > 0 ? (synced > 0 ? 'warning' : 'error') : 'success',
+      title: `Sincronización de cola: ${synced} sincronizados, ${failed.length} fallidos`,
+      params: { totalPending: pending.length, synced, failed: failed.length },
+      details: { synced, failedCount: failed.length },
+    })
+  }
   return { synced, failed: failed.length }
 }
 

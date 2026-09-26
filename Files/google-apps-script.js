@@ -31,16 +31,27 @@
 /* ---- Punto de entrada GET (lectura + escritura) ---- */
 
 function doGet(e) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var params = (e && e.parameter) ? e.parameter : {};
-  var action = params.action;
   var result;
-
   try {
+    var ss = null;
+    try {
+      ss = SpreadsheetApp.getActiveSpreadsheet();
+    } catch (eSs) {
+      return ContentService.createTextOutput(JSON.stringify({ error: 'No se pudo acceder al Spreadsheet activo: ' + eSs.message }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    if (!ss) {
+      return ContentService.createTextOutput(JSON.stringify({ error: 'No se encontró la hoja de cálculo activa' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var params = (e && e.parameter) ? e.parameter : {};
+    var action = params.action;
+
     if (action === 'ping') {
       result = {
         status: 'ok',
-        version: '2.3.0',
+        version: '3.0.0',
         spreadsheetUrl: ss.getUrl(),
         spreadsheetName: ss.getName(),
         timestamp: new Date().toISOString()
@@ -51,12 +62,21 @@ function doGet(e) {
         spreadsheetUrl: ss.getUrl(),
         spreadsheetName: ss.getName()
       };
+    } else if (action === 'getMonthData') {
+      result = getMonthData(ss, params.month, params.knownRowCount);
     } else if (action === 'getCategories') {
       result = getCategories(ss);
     } else if (action === 'getExpenses') {
       result = getExpenses(ss, params.month);
     } else if (action === 'getSummary') {
       result = getSummary(ss, params.month);
+    } else if (action === 'addIncome') {
+      result = addIncome(
+        ss,
+        params.month,
+        params.category,
+        parseFloat(String(params.amount).replace(',', '.'))
+      );
     } else if (action === 'addExpense') {
       result = addExpense(
         ss,
@@ -92,7 +112,8 @@ function doGet(e) {
       result = setTotalIncome(
         ss,
         params.month,
-        parseFloat(String(params.amount).replace(',', '.'))
+        parseFloat(String(params.amount).replace(',', '.')),
+        params.category
       );
     } else if (action === 'getFixedExpenses') {
       result = getFixedExpenses(ss, params.month);
@@ -133,29 +154,62 @@ function doGet(e) {
     result = { error: err.toString() };
   }
 
-  return ContentService.createTextOutput(JSON.stringify(result))
-    .setMimeType(ContentService.MimeType.JSON);
+  try {
+    return ContentService.createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (jsonErr) {
+    return ContentService.createTextOutput(JSON.stringify({ error: 'Error serializando respuesta: ' + jsonErr.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
 }
 
 /* ---- Punto de entrada POST (solo escritura) ---- */
 
 function doPost(e) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var data = {};
-  if (e && e.postData && e.postData.contents) {
-    try {
-      data = JSON.parse(e.postData.contents);
-    } catch (parseErr) {
-      data = {};
-    }
-  }
   var result;
-
   try {
+    var ss = null;
+    try {
+      ss = SpreadsheetApp.getActiveSpreadsheet();
+    } catch (eSs) {
+      return ContentService.createTextOutput(JSON.stringify({ error: 'No se pudo acceder al Spreadsheet activo: ' + eSs.message }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    if (!ss) {
+      return ContentService.createTextOutput(JSON.stringify({ error: 'No se encontró la hoja de cálculo activa' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var data = {};
+    if (e && e.postData && e.postData.contents) {
+      try {
+        data = JSON.parse(e.postData.contents);
+      } catch (parseErr) {
+        data = {};
+      }
+    }
+    // Si no vino en el body JSON, leer de e.parameter (parámetros URL / query string)
+    if (!data.action && e && e.parameter) {
+      for (var pKey in e.parameter) {
+        if (e.parameter.hasOwnProperty(pKey)) {
+          data[pKey] = e.parameter[pKey];
+        }
+      }
+    }
+
     if (data.action === 'ping') {
-      result = { status: 'ok', version: '2.1.0' };
+      result = { status: 'ok', version: '3.0.0' };
+    } else if (data.action === 'getMonthData') {
+      result = getMonthData(ss, data.month, data.knownRowCount);
     } else if (data.action === 'getCategories') {
       result = getCategories(ss);
+    } else if (data.action === 'addIncome') {
+      result = addIncome(
+        ss,
+        data.month,
+        data.category,
+        parseFloat(String(data.amount).replace(',', '.'))
+      );
     } else if (data.action === 'addExpense') {
       result = addExpense(
         ss,
@@ -191,7 +245,8 @@ function doPost(e) {
       result = setTotalIncome(
         ss,
         data.month,
-        parseFloat(String(data.amount).replace(',', '.'))
+        parseFloat(String(data.amount).replace(',', '.')),
+        data.category
       );
     } else if (data.action === 'getFixedExpenses') {
       result = getFixedExpenses(ss, data.month);
@@ -226,8 +281,13 @@ function doPost(e) {
     result = { error: err.toString() };
   }
 
-  return ContentService.createTextOutput(JSON.stringify(result))
-    .setMimeType(ContentService.MimeType.JSON);
+  try {
+    return ContentService.createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (jsonErr) {
+    return ContentService.createTextOutput(JSON.stringify({ error: 'Error serializando respuesta: ' + jsonErr.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
 }
 
 /* ================================================================
@@ -379,87 +439,58 @@ function ensureCategoryInCategoriesSheet(ss, category) {
  * Las lee dinámicamente desde la hoja de categorías Y de los meses existentes.
  */
 function getCategories(ss) {
-  var categoriesSet = {};
-  var categories = [];
+  var variableCategories = [];
+  var incomeCategories = [];
+  var fixedCategories = [];
 
-  function addCategory(cat) {
-    var trimmed = String(cat || '').trim();
-    if (!trimmed) return;
-    var norm = normalizeStr(trimmed);
-    // Ignorar encabezados comunes
-    if (norm === 'gastos variables' || norm === 'categoria' || norm === 'categorias' || norm === 'concepto') {
-      return;
-    }
-    if (!categoriesSet[norm]) {
-      categoriesSet[norm] = true;
-      categories.push(trimmed);
-    }
-  }
-
-  // 1. Leer desde la hoja de Categorías
   var catSheet = findCategoriesSheet(ss);
   if (catSheet) {
-    var colInfo = findCategorySheetCol(catSheet);
-    var lastRow = catSheet.getLastRow();
+    try {
+      var lastRow = Math.min(catSheet.getLastRow(), 60);
+      if (lastRow >= 3) {
+        var numRows = lastRow - 2;
+        // Leer Columnas B a F (Col 2 a 6) en una sola llamada (~30ms)
+        // Col B (idx 0): Ingresos | Col D (idx 2): Gastos Fijos | Col F (idx 4): Gastos Variables
+        var matrix = catSheet.getRange(3, 2, numRows, 5).getValues();
+        for (var r = 0; r < matrix.length; r++) {
+          var b = String(matrix[r][0] || '').trim();
+          var d = String(matrix[r][2] || '').trim();
+          var f = String(matrix[r][4] || '').trim();
 
-    if (lastRow >= colInfo.startRow) {
-      var numRows = lastRow - colInfo.startRow + 1;
-      var data = catSheet.getRange(colInfo.startRow, colInfo.col, numRows, 1).getValues();
-
-      for (var i = 0; i < data.length; i++) {
-        var rawVal = String(data[i][0]);
-        var cleanVal = rawVal.trim();
-        if (cleanVal !== '') {
-          // Limpiar celdas con espacios residuales en la hoja
-          if (rawVal !== cleanVal) {
-            try {
-              catSheet.getRange(colInfo.startRow + i, colInfo.col).setValue(cleanVal);
-            } catch (e) {}
+          if (b && b.toLowerCase() !== 'ingresos' && incomeCategories.indexOf(b) === -1) {
+            incomeCategories.push(b);
           }
-          addCategory(cleanVal);
-        }
-      }
-    }
-  }
-
-  // 2. Escanear meses para incluir cualquier categoría ya utilizada en el pasado
-  var months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-                'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-
-  for (var m = 0; m < months.length; m++) {
-    var ws = findSheet(ss, months[m]);
-    if (ws) {
-      try {
-        var cols = findVariableExpenseCols(ws);
-        var mLastRow = ws.getLastRow();
-        if (mLastRow >= 13) {
-          var mRows = mLastRow - 12;
-          var mCatData = ws.getRange(13, cols.catCol, mRows, 1).getValues();
-          for (var k = 0; k < mCatData.length; k++) {
-            addCategory(mCatData[k][0]);
+          if (d && d.toLowerCase() !== 'gastos fijos' && fixedCategories.indexOf(d) === -1) {
+            fixedCategories.push(d);
+          }
+          if (f && f.toLowerCase() !== 'gastos variables' && variableCategories.indexOf(f) === -1) {
+            variableCategories.push(f);
           }
         }
-      } catch (e) {
-        // Ignorar hojas que no sigan el formato
       }
-    }
+    } catch (e) {}
   }
 
-  // 3. Fallback en caso de que la hoja esté totalmente vacía
-  if (categories.length === 0) {
-    var defaults = [
+  // Fallback con las categorías predeterminadas de la plantilla si la hoja estuviese vacía
+  if (incomeCategories.length === 0) {
+    incomeCategories = ['Euromar', 'Euromar Extra', 'Bizzum Tarjeta Rest', 'Bizz', 'Nómina', 'Extra'];
+  }
+  if (variableCategories.length === 0) {
+    variableCategories = [
       'Fiesta bebida', 'Fiesta entradas', 'Restaurante', 'Bebidas',
       'Bizzum', 'Viajes tickets', 'Peluquerias', 'Cosmetico',
       'Chino Bazar', 'Cafetería', 'Restaurante (Tarjeta Rest)', 'Ocio',
       'Supermecado', 'Museo', 'Regalos', 'Transporte',
       'Musica Tickets', 'Tramites'
     ];
-    for (var d = 0; d < defaults.length; d++) {
-      addCategory(defaults[d]);
-    }
   }
 
-  return { categories: categories };
+  return {
+    categories: variableCategories,
+    variableCategories: variableCategories,
+    incomeCategories: incomeCategories,
+    fixedCategories: fixedCategories
+  };
 }
 
 /**
@@ -540,8 +571,8 @@ function findVariableExpenseCols(ws) {
 /**
  * Devuelve la lista de gastos variables de un mes.
  */
-function getExpenses(ss, month) {
-  var ws = findSheet(ss, month);
+function getExpenses(ss, month, existingWs) {
+  var ws = existingWs || findSheet(ss, month);
   if (!ws) return { error: 'Mes no encontrado: ' + month };
 
   var cols = findVariableExpenseCols(ws);
@@ -557,6 +588,12 @@ function getExpenses(ss, month) {
       var cat = String(catData[i][0]).trim();
       var rawAmt = amtData[i][0];
       var amt = parseFloat(String(rawAmt).replace(',', '.')) || 0;
+
+      // Filtrar filas de totales o subtotales de la plantilla para no duplicar datos
+      var catNorm = normalizeStr(cat);
+      if (catNorm.indexOf('total') !== -1 || catNorm.indexOf('subtotal') !== -1) {
+        continue;
+      }
 
       if (cat !== '' || amt > 0) {
         expenses.push({
@@ -574,8 +611,8 @@ function getExpenses(ss, month) {
 /**
  * Devuelve el resumen económico de un mes.
  */
-function getSummary(ss, month) {
-  var ws = findSheet(ss, month);
+function getSummary(ss, month, existingWs) {
+  var ws = existingWs || findSheet(ss, month);
   if (!ws) return { error: 'Mes no encontrado: ' + month };
 
   var income = 0, fixed = 0, variable = 0;
@@ -627,6 +664,36 @@ function getSummary(ss, month) {
     desiredSavings = parseFloat(String(ws.getRange(3, 9).getValue()).replace(',', '.')) || 0;
   } catch (e) {}
 
+  // Salvaguarda para nuevos meses: si income es 0, comprobar directamente C13 (primera fila de ingresos)
+  if (income === 0) {
+    try {
+      var c13Val = parseFloat(String(ws.getRange(13, 3).getValue()).replace(',', '.')) || 0;
+      if (c13Val > 0) {
+        income = c13Val;
+      }
+    } catch (eInc) {}
+  }
+
+  // Salvaguarda: si variable es 0 pero hay filas de gastos variables, sumar rápidamente
+  if (variable === 0) {
+    try {
+      var expCols = findVariableExpenseCols(ws);
+      var lRow = ws.getLastRow();
+      if (lRow >= 13) {
+        var numR = lRow - 12;
+        var amtVals = ws.getRange(13, expCols.amtCol, numR, 1).getValues();
+        var sumVar = 0;
+        for (var v = 0; v < amtVals.length; v++) {
+          var pV = parseFloat(String(amtVals[v][0]).replace(',', '.')) || 0;
+          sumVar += pV;
+        }
+        if (sumVar > 0) {
+          variable = Math.round(sumVar * 100) / 100;
+        }
+      }
+    } catch (eVar) {}
+  }
+
   var remainingMonth = income - fixed - variable - desiredSavings;
   var legacyRemaining = income - fixed - variable;
 
@@ -644,6 +711,251 @@ function getSummary(ss, month) {
 }
 
 /**
+ * Acción unificada y de ultra alto rendimiento que devuelve resumen mensual,
+ * gastos variables, gastos fijos e ingresos en UNA SOLA llamada por bloque (~150ms).
+ * Si knownRowCount coincide con el número de filas de la hoja, responde casi instantáneamente.
+ */
+function getMonthData(ss, month, knownRowCount) {
+  var ws = findSheet(ss, month);
+  if (!ws) return { error: 'Mes no encontrado: ' + month };
+
+  var lastRow = ws.getLastRow();
+
+  // Comprobación de filas guardadas ("solo comprobar que hay un mismo número de filas")
+  if (knownRowCount != null && parseInt(knownRowCount, 10) === lastRow) {
+    try {
+      return {
+        success: true,
+        unchanged: true,
+        month: ws.getName(),
+        lastRow: lastRow
+      };
+    } catch (eQ) {}
+  }
+
+  // Lectura completa en 1 solo bloque de memoria (1 sola llamada a la API de Google Sheets)
+  var maxScan = Math.min(Math.max(lastRow, 25), 150);
+  var maxCols = 13;
+  var allVals = ws.getRange(1, 1, maxScan, maxCols).getValues();
+
+  // 1. Detección automática de columnas
+  var varCatCol = 9;  // Col I por defecto (Marzo a Diciembre)
+  var varAmtCol = 11; // Col K por defecto (Marzo a Diciembre)
+  var fixedCatCol = 5; // Col E
+  var fixedAmtCol = 7; // Col G por defecto (Marzo a Diciembre)
+  var fixedCheckCol = 6; // Col F por defecto (Marzo a Diciembre)
+  var hasCheckbox = true;
+
+  if (maxScan >= 12) {
+    var r12 = allVals[11];
+    var normH12 = normalizeStr(r12[7] || '');
+    var normJ12 = normalizeStr(r12[9] || '');
+    var normF12 = normalizeStr(r12[5] || '');
+    // Si en Col H (idx 7) está 'Categoría' y en Col J (idx 9) 'Cantidad' (Enero/Febrero)
+    if (normH12.indexOf('cat') >= 0 || normJ12.indexOf('cant') >= 0) {
+      varCatCol = 8;
+      varAmtCol = 10;
+      fixedAmtCol = 6;
+      fixedCheckCol = null;
+      hasCheckbox = false;
+    } else if (normF12.indexOf('cant') >= 0) {
+      fixedAmtCol = 6;
+      fixedCheckCol = null;
+      hasCheckbox = false;
+    }
+  }
+
+  // 2. Extraer Gastos Variables
+  var expenses = [];
+  var totalVarCalculated = 0;
+  for (var rV = 12; rV < maxScan; rV++) {
+    var vCat = String(allVals[rV][varCatCol - 1] || '').trim();
+    var vAmt = parseFloat(String(allVals[rV][varAmtCol - 1]).replace(',', '.')) || 0;
+    var vNorm = normalizeStr(vCat);
+    if (vNorm.indexOf('total') !== -1 || vNorm.indexOf('subtotal') !== -1) continue;
+    if (vCat !== '' || vAmt > 0) {
+      expenses.push({ row: rV + 1, category: vCat || 'General', amount: vAmt });
+      totalVarCalculated += vAmt;
+    }
+  }
+
+  // 3. Extraer Gastos Fijos (filas 13 a 21)
+  var fixedExpenses = [];
+  var totalFixedCalculated = 0;
+  var fixedEnd = Math.min(maxScan, 22);
+  for (var rF = 12; rF < fixedEnd && rF <= 20; rF++) {
+    var fCat = String(allVals[rF][fixedCatCol - 1] || '').trim();
+    if (!fCat && FIXED_DEFAULT_CATEGORIES[rF + 1]) fCat = FIXED_DEFAULT_CATEGORIES[rF + 1];
+    if (!fCat) continue;
+    var checkVal = (hasCheckbox && fixedCheckCol) ? allVals[rF][fixedCheckCol - 1] : true;
+    var isChecked = isCheckboxChecked(checkVal);
+    var fAmt = parseFloat(String(allVals[rF][fixedAmtCol - 1]).replace(',', '.')) || 0;
+    if (fAmt === 0 && FIXED_DEFAULT_AMOUNTS[rF + 1]) fAmt = FIXED_DEFAULT_AMOUNTS[rF + 1];
+    if (isChecked) totalFixedCalculated += fAmt;
+    fixedExpenses.push({
+      row: rF + 1,
+      category: fCat,
+      amount: fAmt,
+      active: isChecked,
+      hasCheckbox: hasCheckbox
+    });
+  }
+
+  // 4. Extraer Ingresos detallados (Col B y Col C)
+  var incomes = [];
+  var totalIncCalculated = 0;
+  for (var rI = 12; rI < maxScan; rI++) {
+    var iCat = String(allVals[rI][1] || '').trim();
+    var iAmt = parseFloat(String(allVals[rI][2]).replace(',', '.')) || 0;
+    if (iCat !== '' || iAmt > 0) {
+      incomes.push({ row: rI + 1, category: iCat || 'Ingreso', amount: iAmt });
+      totalIncCalculated += iAmt;
+    }
+  }
+
+  // 5. Meta de ahorro (Fila 3, Col I = 9)
+  var desiredSavings = 0;
+  if (allVals[2] && allVals[2][8]) {
+    desiredSavings = parseFloat(String(allVals[2][8]).replace(',', '.')) || 0;
+  }
+
+  // 6. Ingreso total de la fila 10 (C10) o de la suma de filas de ingresos
+  var c10Income = (allVals[9] && allVals[9][2]) ? (parseFloat(String(allVals[9][2]).replace(',', '.')) || 0) : 0;
+  var finalIncome = c10Income > 0 ? c10Income : totalIncCalculated;
+
+  var totalExpenses = Math.round((totalFixedCalculated + totalVarCalculated) * 100) / 100;
+  var remainingMonth = Math.round((finalIncome - totalExpenses - desiredSavings) * 100) / 100;
+
+  var summary = {
+    month: ws.getName(),
+    income: Math.round(finalIncome * 100) / 100,
+    fixedExpenses: Math.round(totalFixedCalculated * 100) / 100,
+    variableExpenses: Math.round(totalVarCalculated * 100) / 100,
+    totalExpenses: totalExpenses,
+    desiredSavings: Math.round(desiredSavings * 100) / 100,
+    remainingMonth: remainingMonth,
+    savings: remainingMonth
+  };
+
+  return {
+    success: true,
+    month: ws.getName(),
+    summary: summary,
+    expenses: expenses,
+    fixedExpenses: fixedExpenses,
+    incomes: incomes,
+    lastRow: lastRow,
+    expensesCount: expenses.length,
+    totalActiveFixed: Math.round(totalFixedCalculated * 100) / 100,
+    hasCheckbox: hasCheckbox
+  };
+}
+
+/**
+ * Localiza con exactitud las columnas de Ingresos (Col B: Categoría, Col C: Cantidad/Importe).
+ */
+function findIncomeCols(ws) {
+  var catCol = 2; // Col B por defecto
+  var amtCol = 3; // Col C por defecto
+  try {
+    var scanRows = Math.min(ws.getLastRow(), 14);
+    if (scanRows >= 10) {
+      var headerMatrix = ws.getRange(10, 1, scanRows - 9, Math.min(10, ws.getLastColumn())).getValues();
+      for (var r = 0; r < headerMatrix.length; r++) {
+        for (var c = 0; c < headerMatrix[r].length; c++) {
+          var val = normalizeStr(headerMatrix[r][c]);
+          if (val.indexOf('ingres') !== -1 && val.indexOf('gasto') === -1) {
+            catCol = c + 1;
+            amtCol = c + 2;
+            return { catCol: catCol, amtCol: amtCol };
+          }
+        }
+      }
+    }
+  } catch (e) {}
+  return { catCol: catCol, amtCol: amtCol };
+}
+
+/**
+ * Añade un ingreso individual al mes especificado escribiéndolo en las columnas correspondientes
+ * de Ingresos: Columna B (Categoría) y Columna C (Cantidad/Importe).
+ * Encuentra la primera fila libre desde la fila 13 en adelante y actualiza la fórmula en C10.
+ */
+function addIncome(ss, month, category, amount) {
+  var cleanCat = String(category || '').trim();
+  var parsedAmt = parseFloat(String(amount).replace(',', '.'));
+
+  if (!cleanCat) cleanCat = 'Euromar';
+  if (isNaN(parsedAmt) || parsedAmt <= 0) return { error: 'Importe de ingreso inválido' };
+
+  var ws = findSheet(ss, month);
+  if (!ws) return { error: 'Mes no encontrado: ' + month };
+
+  var cols = findIncomeCols(ws);
+  var targetRow = 13;
+  var maxScan = Math.max(ws.getLastRow(), 35);
+  var numRows = maxScan - 12;
+
+  var bVals = ws.getRange(13, cols.catCol, numRows, 1).getValues();
+  var cVals = ws.getRange(13, cols.amtCol, numRows, 1).getValues();
+
+  targetRow = maxScan + 1;
+  for (var i = 0; i < bVals.length; i++) {
+    var bItem = String(bVals[i][0] || '').trim();
+    var cItem = parseFloat(String(cVals[i][0]).replace(',', '.')) || 0;
+    if (bItem === '' && cItem === 0) {
+      targetRow = i + 13;
+      break;
+    }
+  }
+
+  if (targetRow > ws.getMaxRows()) {
+    ws.insertRowsAfter(ws.getMaxRows(), 5);
+  }
+
+  // 1. Asignar categoría en Col B con total tolerancia a validaciones
+  setSafeIncomeCategory(ws, targetRow, cols.catCol, cleanCat);
+
+  // 2. Asignar importe en Col C
+  try {
+    ws.getRange(targetRow, cols.amtCol).setValue(parsedAmt);
+  } catch (eAmt) {
+    try {
+      ws.getRange(targetRow, cols.amtCol).clearDataValidations();
+      ws.getRange(targetRow, cols.amtCol).setValue(parsedAmt);
+    } catch (eAmt2) {}
+  }
+
+  // 3. Asegurar fórmula en C10 =SUM(C13:C993)
+  try {
+    var cellC10 = ws.getRange(10, cols.amtCol);
+    var formula = String(cellC10.getFormula() || '');
+    if (!formula || (formula.indexOf('SUM') === -1 && formula.indexOf('SUMA') === -1)) {
+      try {
+        cellC10.setFormula('=SUM(C13:C993)');
+      } catch (eF1) {
+        try { cellC10.setFormula('=SUMA(C13:C993)'); } catch (eF2) {}
+      }
+    }
+  } catch (eF) {}
+
+  SpreadsheetApp.flush();
+
+  var updated = getMonthData(ss, ws.getName());
+  return {
+    success: true,
+    row: targetRow,
+    category: cleanCat,
+    amount: parsedAmt,
+    month: ws.getName(),
+    summary: updated.summary,
+    expenses: updated.expenses,
+    incomes: updated.incomes,
+    lastRow: updated.lastRow
+  };
+}
+
+/**
  * Añade un gasto variable al mes indicado con protección total contra fallos de validación.
  */
 function addExpense(ss, month, category, amount) {
@@ -652,6 +964,13 @@ function addExpense(ss, month, category, amount) {
 
   if (!cleanCat) return { error: 'La categoría no puede estar vacía' };
   if (isNaN(parsedAmt) || parsedAmt <= 0) return { error: 'Importe inválido' };
+
+  // Salvaguarda: Si la categoría ingresada corresponde a ingresos, escribir automáticamente en Col B y C
+  var normCat = normalizeStr(cleanCat);
+  var incomeKeywords = ['euromar', 'euromar extra', 'bizzum tarjeta rest', 'bizum', 'bizz', 'bizzum', 'nomina', 'sueldo', 'salario', 'ingreso', 'ingresos', 'extra', 'trabajo', 'paga'];
+  if (incomeKeywords.indexOf(normCat) !== -1) {
+    return addIncome(ss, month, cleanCat, parsedAmt);
+  }
 
   var ws = findSheet(ss, month);
   if (!ws) return { error: 'Mes no encontrado: ' + month };
@@ -689,8 +1008,6 @@ function addExpense(ss, month, category, amount) {
   try {
     catCell.setValue(canonicalCat);
   } catch (valErr) {
-    // Si la validación de Google Sheets rechaza el valor por conflicto estricto,
-    // limpiamos la validación de esa celda concreta para permitir el registro sin bloquear la sincronización
     try {
       catCell.clearDataValidations();
       catCell.setValue(canonicalCat);
@@ -700,13 +1017,20 @@ function addExpense(ss, month, category, amount) {
   }
 
   amtCell.setValue(parsedAmt);
+  SpreadsheetApp.flush();
+
+  // Devolver el resumen y lista actualizados para evitar llamadas de red redundantes
+  var updatedData = getMonthData(ss, ws.getName());
 
   return {
     success: true,
     row: nextRow,
     category: canonicalCat,
     amount: parsedAmt,
-    month: ws.getName()
+    month: ws.getName(),
+    summary: updatedData.summary,
+    expenses: updatedData.expenses || [],
+    lastRow: updatedData.lastRow
   };
 }
 
@@ -889,7 +1213,14 @@ function setSavingsGoal(ss, month, amount) {
   }
 
   // Establecer el valor
-  ws.getRange(targetRow, targetCol).setValue(parsedAmt);
+  try {
+    ws.getRange(targetRow, targetCol).setValue(parsedAmt);
+  } catch (eGoalVal) {
+    try {
+      ws.getRange(targetRow, targetCol).clearDataValidations();
+      ws.getRange(targetRow, targetCol).setValue(parsedAmt);
+    } catch (eGoalVal2) {}
+  }
   try {
     var valH = ws.getRange(targetRow, 8).getValue();
     if (valH !== '' && !isNaN(parseFloat(String(valH).replace(',', '.')))) {
@@ -899,72 +1230,234 @@ function setSavingsGoal(ss, month, amount) {
 
   SpreadsheetApp.flush();
 
+  var sum = getSummary(ss, ws.getName(), ws);
+  if (sum.desiredSavings !== parsedAmt) {
+    sum.desiredSavings = parsedAmt;
+    sum.remainingMonth = (sum.income || 0) - (sum.totalExpenses || 0) - parsedAmt;
+    sum.savings = sum.remainingMonth;
+  }
+
   return {
     success: true,
     month: ws.getName(),
     desiredSavings: parsedAmt,
-    summary: getSummary(ss, ws.getName())
+    summary: sum
   };
+}
+
+/**
+ * Asigna una categoría en la celda de concepto de ingresos (ej. B13) con máxima compatibilidad y
+ * protección frente a cualquier regla de validación de datos (listas desplegables, rangos, etc.).
+ * Si la celda ya tiene texto, la preserva. Si está vacía, determina el valor admitido por la validación
+ * o relaja la validación para evitar que lance una excepción en Google Sheets.
+ */
+function setSafeIncomeCategory(ws, row, col, preferredCat) {
+  var cell = ws.getRange(row, col);
+  var current = '';
+  try {
+    current = String(cell.getValue() || '').trim();
+  } catch (eGet) {}
+
+  // Si la celda ya tiene un concepto o categoría asignada, conservarla
+  if (current) {
+    return current;
+  }
+
+  var rule = null;
+  try {
+    rule = cell.getDataValidation();
+  } catch (eRule) {}
+
+  var validOptions = [];
+  if (rule) {
+    try {
+      var cType = rule.getCriteriaType();
+      var cVals = rule.getCriteriaValues();
+      if (cType === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST && cVals && cVals[0]) {
+        var list = cVals[0];
+        for (var i = 0; i < list.length; i++) {
+          var item = String(list[i] || '').trim();
+          if (item) validOptions.push(item);
+        }
+      } else if (cType === SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE && cVals && cVals[0]) {
+        var range = cVals[0];
+        if (range && range.getValues) {
+          var rVals = range.getValues();
+          for (var r = 0; r < rVals.length; r++) {
+            for (var c = 0; c < rVals[r].length; c++) {
+              var itemR = String(rVals[r][c] || '').trim();
+              if (itemR) validOptions.push(itemR);
+            }
+          }
+        }
+      }
+    } catch (eCriteria) {}
+  }
+
+  // Lista de candidatos ordenada por prioridad
+  var candidates = [];
+  if (preferredCat) candidates.push(preferredCat);
+
+  if (validOptions.length > 0) {
+    var prefNorm = normalizeStr(preferredCat || 'euromar');
+    for (var vo = 0; vo < validOptions.length; vo++) {
+      if (normalizeStr(validOptions[vo]) === prefNorm) {
+        candidates.unshift(validOptions[vo]);
+        break;
+      }
+    }
+    // Si no coincide exactamente, añadir la primera opción válida como alta prioridad para evitar fallos de validación
+    if (candidates.indexOf(validOptions[0]) === -1) {
+      candidates.push(validOptions[0]);
+    }
+    var keywords = ['euromar', 'bizzum', 'bizum', 'nomina', 'salario', 'sueldo', 'ingreso', 'ingresos', 'trabajo'];
+    for (var k = 0; k < keywords.length; k++) {
+      for (var vi = 0; vi < validOptions.length; vi++) {
+        if (normalizeStr(validOptions[vi]).indexOf(keywords[k]) >= 0) {
+          if (candidates.indexOf(validOptions[vi]) === -1) {
+            candidates.push(validOptions[vi]);
+          }
+        }
+      }
+    }
+    for (var v2 = 0; v2 < validOptions.length; v2++) {
+      if (candidates.indexOf(validOptions[v2]) === -1) {
+        candidates.push(validOptions[v2]);
+      }
+    }
+  }
+
+  var standardTerms = ['Euromar', 'Bizzum Tarjeta Rest', 'Bizz', 'Nómina', 'Nomina', 'Sueldo', 'Salario', 'Ingreso', 'Ingresos', 'General'];
+  for (var st = 0; st < standardTerms.length; st++) {
+    if (candidates.indexOf(standardTerms[st]) === -1) {
+      candidates.push(standardTerms[st]);
+    }
+  }
+
+  // Intentar asignar los candidatos
+  for (var cIdx = 0; cIdx < candidates.length; cIdx++) {
+    var candidate = candidates[cIdx];
+    try {
+      cell.setValue(candidate);
+      return candidate;
+    } catch (eSet) {}
+  }
+
+  var defaultFallbackCat = (validOptions.length > 0 ? validOptions[0] : (preferredCat || 'Euromar'));
+
+  // Si la validación rechaza con excepción:
+  // 1. Intentar permitir datos no válidos (setAllowInvalid(true)) manteniendo el menú
+  try {
+    if (rule) {
+      var relaxedRule = rule.copy().setAllowInvalid(true).build();
+      cell.setDataValidation(relaxedRule);
+      cell.setValue(preferredCat || defaultFallbackCat);
+      return preferredCat || defaultFallbackCat;
+    }
+  } catch (eRelax) {}
+
+  // 2. Si no es posible relajarla, limpiar validación de esa celda
+  try {
+    cell.clearDataValidations();
+    cell.setValue(preferredCat || defaultFallbackCat);
+    return preferredCat || defaultFallbackCat;
+  } catch (eClear) {}
+
+  return '';
 }
 
 /**
  * Establece o actualiza los ingresos totales para el mes indicado.
  * Mantiene la integridad de las fórmulas del spreadsheet actualizando la
  * fila principal de ingresos (fila 13) y limpiando filas adicionales si fuera necesario.
+ * Es completamente tolerante ante reglas de validación de datos en B13 y C13.
  */
-function setTotalIncome(ss, month, amount) {
-  var parsedAmt = parseFloat(String(amount).replace(',', '.'));
-  if (isNaN(parsedAmt) || parsedAmt < 0) {
-    return { error: 'Cantidad de ingresos inválida' };
-  }
+function setTotalIncome(ss, month, amount, optionalCategory) {
+  try {
+    var parsedAmt = parseFloat(String(amount).replace(',', '.'));
+    if (isNaN(parsedAmt) || parsedAmt < 0) {
+      return { error: 'Cantidad de ingresos inválida: ' + amount };
+    }
 
-  var ws = findSheet(ss, month);
-  if (!ws) {
-    return { error: 'No se encontró la hoja para el mes: ' + month };
-  }
+    var ws = findSheet(ss, month);
+    if (!ws) {
+      return { error: 'No se encontró la hoja para el mes: ' + month };
+    }
 
-  // 1. Conservar categoría existente en B13 o asignar "Nómina"
-  var currentCat = String(ws.getRange(13, 2).getValue()).trim();
-  if (!currentCat) {
-    ws.getRange(13, 2).setValue('Nómina');
-  }
+    var cols = findIncomeCols(ws);
 
-  // 2. Asignar el importe en C13
-  ws.getRange(13, 3).setValue(parsedAmt);
+    // 1. Asignar categoría en Col B (cols.catCol) con total protección contra errores de validación de Google Sheets
+    try {
+      setSafeIncomeCategory(ws, 13, cols.catCol, optionalCategory || 'Euromar');
+    } catch (eCat) {
+      // Si la celda tuviese algún bloqueo, continuar para no impedir guardar el importe
+    }
 
-  // 3. Limpiar ingresos secundarios antiguos en filas 14-30 para que el total coincida exactamente
-  var lastRow = Math.min(ws.getLastRow(), 35);
-  if (lastRow >= 14) {
-    for (var r = 14; r <= lastRow; r++) {
-      var valC = ws.getRange(r, 3).getValue();
-      if (valC !== '' && !isNaN(parseFloat(String(valC).replace(',', '.')))) {
-        ws.getRange(r, 2).clearContent();
-        ws.getRange(r, 3).clearContent();
+    // 2. Asignar el importe en Col C (cols.amtCol) de forma segura
+    try {
+      ws.getRange(13, cols.amtCol).setValue(parsedAmt);
+    } catch (amtErr) {
+      try {
+        ws.getRange(13, cols.amtCol).clearDataValidations();
+        ws.getRange(13, cols.amtCol).setValue(parsedAmt);
+      } catch (amtErr2) {
+        return { error: 'No se pudo escribir el importe en la celda: ' + amtErr2.message };
       }
     }
-  }
 
-  // 4. Asegurar fórmula =SUM(C13:C993) / =SUMA(C13:C993) en C10 si fue sobreescrita
-  var cellC10 = ws.getRange(10, 3);
-  var formulaC10 = cellC10.getFormula();
-  if (!formulaC10 || (formulaC10.indexOf('SUM') === -1 && formulaC10.indexOf('SUMA') === -1)) {
+    // 3. Limpiar ingresos secundarios antiguos en filas 14-35 en UNA SOLA LLAMADA por bloque (ultrarrápido)
     try {
-      cellC10.setFormula('=SUM(C13:C993)');
-    } catch (e) {
-      try {
-        cellC10.setFormula('=SUMA(C13:C993)');
-      } catch (e2) {}
+      var lastRow = Math.min(ws.getLastRow(), 35);
+      if (lastRow >= 14) {
+        var clearCount = lastRow - 13;
+        ws.getRange(14, cols.catCol, clearCount, 2).clearContent();
+      }
+    } catch (clearErr) {}
+
+    // 4. Asegurar fórmula =SUM(C13:C993) / =SUMA(C13:C993) en C10 (cols.amtCol) si fue sobreescrita
+    try {
+      var cellC10 = ws.getRange(10, cols.amtCol);
+      var formulaC10 = String(cellC10.getFormula() || '');
+      if (!formulaC10 || (formulaC10.indexOf('SUM') === -1 && formulaC10.indexOf('SUMA') === -1)) {
+        try {
+          cellC10.setFormula('=SUM(C13:C993)');
+        } catch (e) {
+          try {
+            cellC10.setFormula('=SUMA(C13:C993)');
+          } catch (e2) {}
+        }
+      }
+    } catch (eFormula) {}
+
+    SpreadsheetApp.flush();
+
+    var updatedData = getMonthData(ss, ws.getName());
+    var sum = (updatedData && updatedData.summary && updatedData.summary.income > 0)
+      ? updatedData.summary
+      : getSummary(ss, ws.getName(), ws);
+
+    // Salvaguarda: garantizar que el resumen devuelva el ingreso recién asignado
+    if (!sum || sum.error || !sum.income || sum.income === 0) {
+      if (!sum || sum.error) sum = {};
+      sum.month = ws.getName();
+      sum.income = parsedAmt;
+      sum.totalExpenses = (sum.fixedExpenses || 0) + (sum.variableExpenses || 0);
+      sum.remainingMonth = parsedAmt - sum.totalExpenses - (sum.desiredSavings || 0);
+      sum.savings = sum.remainingMonth;
     }
+
+    return {
+      success: true,
+      month: ws.getName(),
+      income: parsedAmt,
+      summary: sum,
+      expenses: (updatedData && updatedData.expenses) ? updatedData.expenses : [],
+      incomes: (updatedData && updatedData.incomes) ? updatedData.incomes : [],
+      lastRow: (updatedData && updatedData.lastRow) ? updatedData.lastRow : ws.getLastRow()
+    };
+  } catch (errGlobal) {
+    return { error: 'Error procesando ingresos: ' + errGlobal.toString() };
   }
-
-  SpreadsheetApp.flush();
-
-  return {
-    success: true,
-    month: ws.getName(),
-    income: parsedAmt,
-    summary: getSummary(ss, ws.getName())
-  };
 }
 
 /* ================================================================
@@ -1221,8 +1714,8 @@ function isCheckboxChecked(rawVal, displayVal) {
  * Si detecta que la Columna F fue dañada con texto "TRUE" o booleano, restaura automáticamente
  * la fórmula =IF(G#; importe; 0) en la Columna F y devuelve el importe correcto.
  */
-function getFixedExpenses(ss, month) {
-  var ws = findSheet(ss, month);
+function getFixedExpenses(ss, month, existingWs) {
+  var ws = existingWs || findSheet(ss, month);
   if (!ws) return { error: 'Mes no encontrado: ' + month };
 
   var cols = findFixedExpenseCols(ws);
@@ -1415,7 +1908,14 @@ function setFixedExpenseAmount(ss, month, row, newAmount, newCategory) {
 
   // 1. Si se proporciona nuevo nombre de categoría, actualizarlo en Col E
   if (newCategory && String(newCategory).trim()) {
-    ws.getRange(targetRow, cols.catCol).setValue(String(newCategory).trim());
+    try {
+      ws.getRange(targetRow, cols.catCol).setValue(String(newCategory).trim());
+    } catch (eCat) {
+      try {
+        ws.getRange(targetRow, cols.catCol).clearDataValidations();
+        ws.getRange(targetRow, cols.catCol).setValue(String(newCategory).trim());
+      } catch (eCat2) {}
+    }
   }
 
   // 2. Actualizar el importe en Col F con fórmula =IF(G#; importe; 0) (separador ';' y decimales ',')
@@ -1424,7 +1924,14 @@ function setFixedExpenseAmount(ss, month, row, newAmount, newCategory) {
     var checkRef = ws.getRange(targetRow, cols.checkCol).getA1Notation(); // G#
     setFixedExpenseCellFormula(amtCell, checkRef, numAmount);
   } else {
-    amtCell.setValue(numAmount);
+    try {
+      amtCell.setValue(numAmount);
+    } catch (eAmt) {
+      try {
+        amtCell.clearDataValidations();
+        amtCell.setValue(numAmount);
+      } catch (eAmt2) {}
+    }
   }
 
   SpreadsheetApp.flush();
@@ -1579,25 +2086,26 @@ function getControlPanelData(ss) {
   var totalFixed = 0;
   var totalVariable = 0;
 
-  // Si existe 'Data gráficos', leer filas 4 a 15 (Columnas B a F)
-  // B: Mes, C: Ingresos, D: Gastos Fijos, E: Gastos Variables, F: Gastos Totales
-  var graficosMatrix = null;
-  if (wsDataGraficos) {
-    try {
-      graficosMatrix = wsDataGraficos.getRange(4, 2, 12, 5).getValues();
-    } catch (e) {}
-  }
+  if (wsDataGraficos || wsPanel) {
+    // Si existe 'Data gráficos', leer filas 4 a 15 (Columnas B a F)
+    // B: Mes, C: Ingresos, D: Gastos Fijos, E: Gastos Variables, F: Gastos Totales
+    var graficosMatrix = null;
+    if (wsDataGraficos) {
+      try {
+        graficosMatrix = wsDataGraficos.getRange(4, 2, 12, 5).getValues();
+      } catch (e) {}
+    }
 
-  // Matriz de 'Panel de control'
-  var panelMatrix = null;
-  var colMap = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26];
-  if (wsPanel) {
-    try {
-      panelMatrix = wsPanel.getRange(5, 1, 11, 28).getValues();
-    } catch (e) {}
-  }
+    // Matriz de 'Panel de control'
+    var panelMatrix = null;
+    var colMap = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26];
+    if (wsPanel) {
+      try {
+        panelMatrix = wsPanel.getRange(5, 1, 11, 28).getValues();
+      } catch (e) {}
+    }
 
-  for (var m = 0; m < 12; m++) {
+    for (var m = 0; m < 12; m++) {
     var mName = months[m];
     var mShort = shortMonths[m];
     var colIdx = colMap[m] - 1; // 0-indexed para Panel de control
