@@ -273,9 +273,16 @@ function SwipeableRow({ expense, onEdit, onDelete }) {
         </div>
 
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-slate-800 truncate">
-            {expense.category}
-          </p>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <p className="text-sm font-semibold text-slate-800 truncate">
+              {expense.category}
+            </p>
+            {expense.isLocal && (
+              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 border border-amber-200/90">
+                📦 En local
+              </span>
+            )}
+          </div>
           <p className="text-[11px] text-slate-400">Toca para editar</p>
         </div>
 

@@ -15,10 +15,10 @@ export default function MonthlySummary({
   const remainingMonth =
     summary?.remainingMonth ??
     summary?.savings ??
-    ((summary?.income ?? 0) - (summary?.fixedExpenses ?? 0) - (summary?.variableExpenses ?? 0) - (savingTarget ?? 0))
+    ((summary?.income ?? summary?.totalIncome ?? 0) - (summary?.fixedExpenses ?? summary?.fixed ?? 0) - (summary?.variableExpenses ?? summary?.variable ?? 0) - (savingTarget ?? 0))
 
-  const totalSpent = (summary?.fixedExpenses ?? 0) + (summary?.variableExpenses ?? 0)
-  const income = summary?.income ?? 0
+  const totalSpent = (summary?.fixedExpenses ?? summary?.fixed ?? 0) + (summary?.variableExpenses ?? summary?.variable ?? 0)
+  const income = summary?.income ?? summary?.totalIncome ?? 0
   const spendPercent = income > 0 ? Math.min(100, Math.round((totalSpent / income) * 100)) : 0
   const isPositive = remainingMonth >= 0
 
@@ -181,7 +181,7 @@ export default function MonthlySummary({
             <div className="h-6 w-20 bg-slate-100 rounded animate-pulse" />
           ) : (
             <p className="text-base font-bold text-slate-800">
-              {fmt(summary?.fixedExpenses)}
+              {fmt(summary?.fixedExpenses ?? summary?.fixed ?? 0)}
             </p>
           )}
         </motion.button>

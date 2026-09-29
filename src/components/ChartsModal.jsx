@@ -11,10 +11,12 @@ import {
   PiggyBank,
   Layers,
   BarChart3,
-  Calendar
+  Calendar,
+  Download
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
+import { Button } from '@/components/ui/button'
 import {
   ResponsiveContainer,
   BarChart,
@@ -70,8 +72,8 @@ export default function ChartsModal({ isOpen, onClose }) {
         setLoading(false)
       } else {
         setLoading(true)
+        loadData(true)
       }
-      loadData(true)
     }
   }, [isOpen])
 
@@ -207,28 +209,32 @@ export default function ChartsModal({ isOpen, onClose }) {
                   )}
                 </div>
                 <p className="text-[11px] text-slate-500 font-medium">
-                  Datos consolidados de la pestaña <span className="font-semibold text-slate-700">Panel de control</span>
+                  Datos consolidados · <span className="text-emerald-700 font-semibold">Almacenados en local</span>
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-1.5">
-              <button
+              <Button
                 type="button"
+                size="sm"
+                variant="outline"
                 onClick={() => loadData(true)}
                 disabled={refreshing || loading}
-                title="Actualizar datos desde Google Sheets"
-                className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white hover:bg-slate-100 text-slate-600 flex items-center justify-center border border-slate-200 transition-colors disabled:opacity-50"
+                title="Descargar datos actualizados del Panel de control desde Google Sheets"
+                className="h-8 rounded-xl border-slate-200 text-slate-700 hover:bg-slate-100 flex items-center gap-1.5 px-2.5 text-xs font-semibold"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-primary' : ''}`} />
-              </button>
+                <Download className={`w-3.5 h-3.5 ${refreshing ? 'animate-bounce text-primary' : 'text-slate-500'}`} />
+                <span className="hidden sm:inline">{refreshing ? 'Descargando...' : 'Descargar de Excel'}</span>
+                <span className="sm:hidden">{refreshing ? '...' : 'Descargar'}</span>
+              </Button>
               <button
                 type="button"
                 onClick={() => {
                   Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
                   onClose()
                 }}
-                className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white hover:bg-slate-100 text-slate-600 flex items-center justify-center border border-slate-200 transition-colors"
+                className="w-8 h-8 rounded-full bg-white hover:bg-slate-100 text-slate-600 flex items-center justify-center border border-slate-200 transition-colors"
                 aria-label="Cerrar gráficos"
               >
                 <X className="w-4 h-4" />

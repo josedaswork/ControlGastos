@@ -1,30 +1,48 @@
 /**
  * ============================================================
- *  Google Apps Script — Backend para Control Gastos App
+ *  Google Apps Script — Backend para Control Gastos App (v3.6.0)
+ *  Soporte Local-First con "Push Changes" en lote y sincronización
  * ============================================================
  *
+ *  ESTRUCTURA DE COLUMNAS DEL SPREADSHEET (Control Dinero 2026):
+ *
+ *  Meses Marzo a Diciembre (Con Casillas de Verificación):
+ *    - Fila 10 Totales:
+ *        C10: INGRESOS TOTALES          =SUM(C13:C993)
+ *        G10: GASTOS FIJOS TOTALES      =SUM(G13:G993)
+ *        K10: GASTOS VARIABLES TOTALES  =SUM(K13:K993)
+ *    - Fila 12 Encabezados:
+ *        B12: Categoría | C12: Cantidad (Ingresos)
+ *        E12: Categoría | F12: [Casilla] | G12: Cantidad (Gastos Fijos)
+ *        I12: Categoría | K12: Cantidad (Gastos Variables)
+ *    - Filas 13 a 21 (Gastos Fijos):
+ *        Col E (5): Categoría / Concepto
+ *        Col F (6): Casilla de verificación (TRUE / FALSE / 1 / 0)
+ *        Col G (7): Importe condicional: =IF(F13, 470, 0)
+ *    - Filas 13+ (Gastos Variables):
+ *        Col I (9): Categoría
+ *        Col K (11): Cantidad / Importe
+ *    - Filas 13+ (Ingresos):
+ *        Col B (2): Categoría
+ *        Col C (3): Cantidad / Importe
+ *    - Meta de Ahorro: Celda I3 (Fila 3, Columna 9)
+ *
+ *  Meses Enero y Febrero (Sin Casillas):
+ *    - C10: Ingresos | F10: Gastos Fijos | J10: Gastos Variables
+ *    - Ingresos: Col B (2) y Col C (3)
+ *    - Gastos Fijos: Col E (5) y Col F (6)
+ *    - Gastos Variables: Col H (8) y Col J (10)
+ *
  *  INSTRUCCIONES DE DESPLIEGUE:
- *
- *  1. Abre tu spreadsheet en Google Sheets:
- *     https://docs.google.com/spreadsheets/d/1KLn5Ow_eoclIyx2LB0P89JC7vwmNSRV60iBjNepoJjA/edit
- *
- *  2. Ve a  Extensiones → Apps Script
- *
- *  3. Borra todo el contenido del editor y pega ESTE archivo completo.
- *
- *  4. Guarda el proyecto (Ctrl+S).
- *
- *  5. Haz clic en  Implementar → Nueva implementación
- *       • Tipo:        Aplicación web
+ *  1. Abre tu hoja en Google Sheets.
+ *  2. Ve a Extensiones → Apps Script.
+ *  3. Borra todo y pega ESTE archivo completo.
+ *  4. Guarda (Ctrl+S).
+ *  5. Haz clic en Implementar → Nueva implementación:
+ *       • Tipo: Aplicación web
  *       • Ejecutar como: Tu cuenta (yo@gmail.com)
- *       • Acceso:      Cualquier persona
- *
- *  6. Haz clic en "Implementar" y copia la URL generada.
- *
- *  7. Pega esa URL en la pantalla de configuración de la app.
- *
- *  IMPORTANTE: Cada vez que modifiques este script debes crear
- *  una NUEVA implementación para que los cambios surtan efecto.
+ *       • Acceso: Cualquier persona (Anyone)
+ *  6. Haz clic en "Implementar" y copia la URL terminada en "/exec".
  * ============================================================
  */
 
@@ -51,7 +69,7 @@ function doGet(e) {
     if (action === 'ping') {
       result = {
         status: 'ok',
-        version: '3.0.0',
+        version: '3.5.0',
         spreadsheetUrl: ss.getUrl(),
         spreadsheetName: ss.getName(),
         timestamp: new Date().toISOString()
@@ -144,6 +162,14 @@ function doGet(e) {
       result = repairFixedExpenseFormulas(ss, params.month, params.forceAll === 'true' || params.forceAll === true);
     } else if (action === 'getControlPanelData' || action === 'getDashboardData') {
       result = getControlPanelData(ss);
+    } else if (action === 'pushBatchChanges') {
+      var batchTasks = [];
+      try {
+        batchTasks = typeof params.tasks === 'string' ? JSON.parse(params.tasks) : (params.tasks || []);
+      } catch (eTasks) {
+        batchTasks = [];
+      }
+      result = pushBatchChanges(ss, batchTasks);
     } else if (action === 'setLocaleSpain') {
       ensureSpanishLocale(ss);
       result = { status: 'ok', locale: ss.getSpreadsheetLocale() };
@@ -163,7 +189,7 @@ function doGet(e) {
   }
 }
 
-/* ---- Punto de entrada POST (solo escritura) ---- */
+/* ---- Punto de entrada POST (escritura) ---- */
 
 function doPost(e) {
   var result;
@@ -188,7 +214,6 @@ function doPost(e) {
         data = {};
       }
     }
-    // Si no vino en el body JSON, leer de e.parameter (parámetros URL / query string)
     if (!data.action && e && e.parameter) {
       for (var pKey in e.parameter) {
         if (e.parameter.hasOwnProperty(pKey)) {
@@ -198,7 +223,7 @@ function doPost(e) {
     }
 
     if (data.action === 'ping') {
-      result = { status: 'ok', version: '3.0.0' };
+      result = { status: 'ok', version: '3.5.0' };
     } else if (data.action === 'getMonthData') {
       result = getMonthData(ss, data.month, data.knownRowCount);
     } else if (data.action === 'getCategories') {
@@ -271,6 +296,14 @@ function doPost(e) {
       result = repairFixedExpenseFormulas(ss, data.month, data.forceAll === true || data.forceAll === 'true');
     } else if (data.action === 'getControlPanelData' || data.action === 'getDashboardData') {
       result = getControlPanelData(ss);
+    } else if (data.action === 'pushBatchChanges') {
+      var postBatchTasks = [];
+      try {
+        postBatchTasks = typeof data.tasks === 'string' ? JSON.parse(data.tasks) : (data.tasks || []);
+      } catch (ePTasks) {
+        postBatchTasks = [];
+      }
+      result = pushBatchChanges(ss, postBatchTasks);
     } else if (data.action === 'setLocaleSpain') {
       ensureSpanishLocale(ss);
       result = { status: 'ok', locale: ss.getSpreadsheetLocale() };
@@ -291,7 +324,7 @@ function doPost(e) {
 }
 
 /* ================================================================
- *  UTILIDADES Y BÚSQUEDA GENÉRICA
+ *  UTILIDADES Y RESOLUCIÓN EXACTA DE COLUMNAS
  * ================================================================ */
 
 /**
@@ -328,6 +361,87 @@ function findSheet(ss, name) {
 }
 
 /**
+ * Devuelve el mapa exacto de columnas para el mes solicitado con inspección dinámica.
+ * Estructura nativa:
+ *   - Marzo a Diciembre:
+ *       Ingresos:      Cat Col B (2), Cant Col C (3), Total en C10
+ *       Gastos Fijos:  Cat Col E (5), Checkbox Col F (6), Cant Col G (7), Total en G10
+ *       Gastos Var:    Cat Col I (9), Cant Col K (11), Total en K10
+ *   - Enero y Febrero:
+ *       Ingresos:      Cat Col B (2), Cant Col C (3), Total en C10
+ *       Gastos Fijos:  Cat Col E (5), Cant Col F (6) [sin casilla], Total en F10
+ *       Gastos Var:    Cat Col H (8), Cant Col J (10), Total en J10
+ */
+function getSheetColumns(ws) {
+  var name = ws.getName();
+  var normName = normalizeStr(name);
+  var isJanFeb = (normName === 'enero' || normName === 'febrero');
+
+  // Valores predeterminados oficiales de la plantilla
+  var varCatCol = isJanFeb ? 8 : 9;        // Col H (8) o Col I (9)
+  var varAmtCol = isJanFeb ? 10 : 11;      // Col J (10) o Col K (11)
+  var fixedCatCol = 5;                     // Col E (5)
+  var fixedCheckCol = isJanFeb ? null : 6; // Col F (6) Casilla para Marzo-Diciembre
+  var fixedAmtCol = isJanFeb ? 6 : 7;      // Col F (6) o Col G (7)
+  var incomeCatCol = 2;                    // Col B (2)
+  var incomeAmtCol = 3;                    // Col C (3)
+  var hasCheckbox = !isJanFeb;
+
+  // Verificación dinámica en filas 10 a 12 si la hoja tiene encabezados personalizados
+  try {
+    var scanCols = Math.min(ws.getLastColumn(), 15);
+    if (scanCols >= 7 && ws.getLastRow() >= 12) {
+      var r12 = ws.getRange(12, 1, 1, scanCols).getValues()[0];
+      var f12 = normalizeStr(r12[5] || ''); // Col F (idx 5)
+      var g12 = normalizeStr(r12[6] || ''); // Col G (idx 6)
+      var h12 = normalizeStr(r12[7] || ''); // Col H (idx 7)
+      var i12 = normalizeStr(r12[8] || ''); // Col I (idx 8)
+
+      // Comprobar si Col F es la cantidad (Enero/Febrero) o si es Col G (Marzo-Diciembre)
+      if (f12.indexOf('cant') >= 0 || f12.indexOf('imp') >= 0) {
+        hasCheckbox = false;
+        fixedCheckCol = null;
+        fixedAmtCol = 6;
+      } else if (g12.indexOf('cant') >= 0 || g12.indexOf('imp') >= 0) {
+        hasCheckbox = true;
+        fixedCheckCol = 6;
+        fixedAmtCol = 7;
+      }
+
+      // Columnas de Gastos Variables
+      if (h12.indexOf('cat') >= 0) {
+        varCatCol = 8;
+        varAmtCol = 10;
+      } else if (i12.indexOf('cat') >= 0) {
+        varCatCol = 9;
+        varAmtCol = 11;
+      }
+    }
+  } catch (e) {}
+
+  return {
+    isJanFeb: isJanFeb,
+    hasCheckbox: hasCheckbox,
+    income: {
+      catCol: incomeCatCol,
+      amtCol: incomeAmtCol,
+      totalCell: 'C10'
+    },
+    fixed: {
+      catCol: fixedCatCol,
+      checkCol: fixedCheckCol,
+      amtCol: fixedAmtCol,
+      totalCell: hasCheckbox ? 'G10' : 'F10'
+    },
+    variable: {
+      catCol: varCatCol,
+      amtCol: varAmtCol,
+      totalCell: (varAmtCol === 10) ? 'J10' : 'K10'
+    }
+  };
+}
+
+/**
  * Localiza la hoja de categorías (ej. "(Categorías)", "Categorías", etc.).
  */
 function findCategoriesSheet(ss) {
@@ -346,97 +460,7 @@ function findCategoriesSheet(ss) {
 }
 
 /**
- * Encuentra dinámicamente la columna de Gastos Variables en la hoja de Categorías.
- * Si no encuentra encabezado explícito, usa por defecto la columna 6 (F).
- */
-function findCategorySheetCol(catSheet) {
-  if (!catSheet) return { col: 6, startRow: 3 };
-
-  var maxRows = Math.min(catSheet.getLastRow(), 5);
-  var maxCols = Math.min(catSheet.getLastColumn(), 15);
-
-  if (maxRows >= 1 && maxCols >= 1) {
-    var matrix = catSheet.getRange(1, 1, maxRows, maxCols).getValues();
-    for (var r = 0; r < matrix.length; r++) {
-      for (var c = 0; c < matrix[r].length; c++) {
-        var cellNorm = normalizeStr(matrix[r][c]);
-        if (cellNorm.indexOf('variable') >= 0 || cellNorm === 'gastos variables') {
-          return { col: c + 1, startRow: r + 2 };
-        }
-      }
-    }
-  }
-
-  return { col: 6, startRow: 3 };
-}
-
-/**
- * Asegura que una categoría exista en la pestaña de Categorías de forma genérica.
- * Si existe con espacios residuales (ej. "Transporte "), la limpia en la hoja.
- * Si no existe, la añade automáticamente a la lista para que la validación de Google Sheets la acepte.
- * Devuelve el nombre canónico de la categoría.
- */
-function ensureCategoryInCategoriesSheet(ss, category) {
-  var cleanCat = String(category || '').trim();
-  if (!cleanCat) return '';
-
-  var catSheet = findCategoriesSheet(ss);
-  if (!catSheet) return cleanCat;
-
-  var colInfo = findCategorySheetCol(catSheet);
-  var lastRow = catSheet.getLastRow();
-  var normTarget = normalizeStr(cleanCat);
-
-  // Buscar si ya existe en la columna
-  if (lastRow >= colInfo.startRow) {
-    var numRows = lastRow - colInfo.startRow + 1;
-    var values = catSheet.getRange(colInfo.startRow, colInfo.col, numRows, 1).getValues();
-
-    for (var i = 0; i < values.length; i++) {
-      var rawVal = String(values[i][0]);
-      var trimmed = rawVal.trim();
-      if (trimmed !== '' && normalizeStr(trimmed) === normTarget) {
-        // Si tenía espacios al final o al inicio en la hoja (ej. "Transporte "), corregirlo permanentemente
-        if (rawVal !== trimmed) {
-          try {
-            catSheet.getRange(colInfo.startRow + i, colInfo.col).setValue(trimmed);
-          } catch (e) {}
-        }
-        return trimmed;
-      }
-    }
-  }
-
-  // Si no existe, añadirla dinámicamente como nueva categoría
-  var nextRow = colInfo.startRow;
-  if (lastRow >= colInfo.startRow) {
-    var scanRows = lastRow - colInfo.startRow + 1;
-    var currentVals = catSheet.getRange(colInfo.startRow, colInfo.col, scanRows, 1).getValues();
-    nextRow = lastRow + 1;
-    for (var j = 0; j < currentVals.length; j++) {
-      if (String(currentVals[j][0]).trim() === '') {
-        nextRow = colInfo.startRow + j;
-        break;
-      }
-    }
-  }
-
-  if (nextRow > catSheet.getMaxRows()) {
-    catSheet.insertRowsAfter(catSheet.getMaxRows(), 10);
-  }
-
-  try {
-    catSheet.getRange(nextRow, colInfo.col).setValue(cleanCat);
-  } catch (err) {
-    // Si la celda tuviese alguna restricción, continuar sin bloquear
-  }
-
-  return cleanCat;
-}
-
-/**
- * Devuelve la lista completa y GENÉRICA de categorías de gastos variables.
- * Las lee dinámicamente desde la hoja de categorías Y de los meses existentes.
+ * Devuelve la lista de categorías registradas en la hoja (Categorías).
  */
 function getCategories(ss) {
   var variableCategories = [];
@@ -449,8 +473,6 @@ function getCategories(ss) {
       var lastRow = Math.min(catSheet.getLastRow(), 60);
       if (lastRow >= 3) {
         var numRows = lastRow - 2;
-        // Leer Columnas B a F (Col 2 a 6) en una sola llamada (~30ms)
-        // Col B (idx 0): Ingresos | Col D (idx 2): Gastos Fijos | Col F (idx 4): Gastos Variables
         var matrix = catSheet.getRange(3, 2, numRows, 5).getValues();
         for (var r = 0; r < matrix.length; r++) {
           var b = String(matrix[r][0] || '').trim();
@@ -471,7 +493,6 @@ function getCategories(ss) {
     } catch (e) {}
   }
 
-  // Fallback con las categorías predeterminadas de la plantilla si la hoja estuviese vacía
   if (incomeCategories.length === 0) {
     incomeCategories = ['Euromar', 'Euromar Extra', 'Bizzum Tarjeta Rest', 'Bizz', 'Nómina', 'Extra'];
   }
@@ -494,333 +515,178 @@ function getCategories(ss) {
 }
 
 /**
- * Encuentra dinámicamente las columnas de categoría y cantidad
- * de gastos variables en una hoja de mes.
- *
- * Tolera variaciones de encabezado, diferencias de tilde o mayúsculas.
- * Por defecto en la plantilla: Categoría en col H (8), Cantidad en col J (10).
+ * Nombres por defecto de categorías para filas 13 a 21 de Gastos Fijos.
  */
-function findVariableExpenseCols(ws) {
-  var catCol = -1;
-  var amtCol = -1;
+var FIXED_DEFAULT_CATEGORIES = {
+  13: 'Alquiler',
+  14: 'Bono metro',
+  15: 'Gimnasio',
+  16: 'Disney',
+  17: 'Spotify',
+  18: 'Comida Base',
+  19: 'Comida Base',
+  20: 'Servicios',
+  21: 'Inversión'
+};
 
-  // Escanear filas 10 a 14 en busca de "Gastos Variables"
-  var scanRows = Math.min(ws.getLastRow(), 14);
-  if (scanRows >= 10) {
-    var headerMatrix = ws.getRange(10, 1, scanRows - 9, 25).getValues();
+/**
+ * Importes por defecto para filas 13 a 21.
+ */
+var FIXED_DEFAULT_AMOUNTS = {
+  13: 470,
+  14: 10,
+  15: 24.99,
+  16: 6.99,
+  17: 3.5,
+  18: 41.62,
+  19: 57.36,
+  20: 36,
+  21: 0
+};
 
-    // 1. Buscar primero la sección "Gastos Variables"
-    var varSectionCol = -1;
-    for (var r = 0; r < headerMatrix.length; r++) {
-      for (var c = 0; c < headerMatrix[r].length; c++) {
-        var norm = normalizeStr(headerMatrix[r][c]);
-        if (norm === 'gastos variables' || norm === 'gastos variables totales') {
-          varSectionCol = c + 1;
-          break;
-        }
-      }
-      if (varSectionCol !== -1) break;
-    }
+/**
+ * Comprueba si una casilla está marcada basándose en su valor (booleano, 1/0 o texto).
+ */
+function isCheckboxChecked(rawVal, displayVal) {
+  if (rawVal === true) return true;
+  if (rawVal === false) return false;
+  if (rawVal === 1 || rawVal === '1') return true;
+  if (rawVal === 0 || rawVal === '0') return false;
+  if (rawVal === null || rawVal === undefined || rawVal === '') return false;
 
-    // 2. Buscar fila de columnas ("Categoría", "Cantidad")
-    for (var r2 = 0; r2 < headerMatrix.length; r2++) {
-      var rowVals = headerMatrix[r2];
-      var catMatches = [];
+  var s = String(rawVal).trim().toLowerCase();
+  var ds = String(displayVal || '').trim().toLowerCase();
 
-      for (var c2 = 0; c2 < rowVals.length; c2++) {
-        var valNorm = normalizeStr(rowVals[c2]);
-        if (valNorm === 'categoria' || valNorm === 'concepto' || valNorm === 'descripcion') {
-          catMatches.push(c2 + 1);
-        }
-      }
+  var truthy = ['true', 'verdadero', 'v', 'si', 'sí', 'yes', 'y', 'checked', 'ok', 'x', '✓', '✔'];
+  if (truthy.indexOf(s) !== -1 || truthy.indexOf(ds) !== -1) return true;
 
-      // Si hay 3 ocurrencias (Ingresos, Gastos Fijos, Gastos Variables), tomar la 3.ª
-      if (catMatches.length >= 3) {
-        catCol = catMatches[2];
-      } else if (catMatches.length > 0 && varSectionCol !== -1) {
-        // Tomar la que esté más cerca o alineada con la sección de Gastos Variables
-        for (var m = 0; m < catMatches.length; m++) {
-          if (Math.abs(catMatches[m] - varSectionCol) <= 2) {
-            catCol = catMatches[m];
-            break;
-          }
-        }
-      }
+  var falsy = ['false', 'falso', 'f', 'no', 'unchecked', '', 'null', 'undefined'];
+  if (falsy.indexOf(s) !== -1 || falsy.indexOf(ds) !== -1) return false;
 
-      if (catCol !== -1) {
-        // Buscar la columna de cantidad a la derecha de catCol
-        for (var c3 = catCol; c3 < Math.min(catCol + 4, rowVals.length); c3++) {
-          var amtNorm = normalizeStr(rowVals[c3]);
-          if (amtNorm === 'cantidad' || amtNorm === 'importe' || amtNorm === 'precio' || amtNorm === 'total') {
-            amtCol = c3 + 1;
-            break;
-          }
-        }
-        break;
-      }
-    }
-  }
-
-  // Fallback seguro a la estructura nativa de la plantilla (Col H = 8, Col J = 10)
-  if (catCol === -1) catCol = 8;
-  if (amtCol === -1) amtCol = catCol + 2;
-
-  return { catCol: catCol, amtCol: amtCol };
+  return false;
 }
 
 /**
- * Devuelve la lista de gastos variables de un mes.
+ * Asegura la configuración regional de España (es_ES) en segundo plano si es necesario.
  */
-function getExpenses(ss, month, existingWs) {
-  var ws = existingWs || findSheet(ss, month);
-  if (!ws) return { error: 'Mes no encontrado: ' + month };
-
-  var cols = findVariableExpenseCols(ws);
-  var lastRow = ws.getLastRow();
-  var expenses = [];
-
-  if (lastRow >= 13) {
-    var numRows = lastRow - 12;
-    var catData = ws.getRange(13, cols.catCol, numRows, 1).getValues();
-    var amtData = ws.getRange(13, cols.amtCol, numRows, 1).getValues();
-
-    for (var i = 0; i < catData.length; i++) {
-      var cat = String(catData[i][0]).trim();
-      var rawAmt = amtData[i][0];
-      var amt = parseFloat(String(rawAmt).replace(',', '.')) || 0;
-
-      // Filtrar filas de totales o subtotales de la plantilla para no duplicar datos
-      var catNorm = normalizeStr(cat);
-      if (catNorm.indexOf('total') !== -1 || catNorm.indexOf('subtotal') !== -1) {
-        continue;
-      }
-
-      if (cat !== '' || amt > 0) {
-        expenses.push({
-          row: i + 13,
-          category: cat || 'General',
-          amount: amt
-        });
-      }
-    }
-  }
-
-  return { expenses: expenses, month: ws.getName() };
-}
-
-/**
- * Devuelve el resumen económico de un mes.
- */
-function getSummary(ss, month, existingWs) {
-  var ws = existingWs || findSheet(ss, month);
-  if (!ws) return { error: 'Mes no encontrado: ' + month };
-
-  var income = 0, fixed = 0, variable = 0;
-
-  // Escanear filas 9 a 12 de forma tolerante
-  var scanMax = Math.min(ws.getLastRow(), 14);
-  var matrix = ws.getRange(9, 1, Math.max(scanMax - 8, 4), 25).getValues();
-
-  for (var r = 0; r < matrix.length; r++) {
-    var row = matrix[r];
-    for (var i = 0; i < row.length; i++) {
-      var valNorm = normalizeStr(row[i]);
-
-      if (valNorm === 'ingresos totales' || (valNorm === 'ingresos' && income === 0)) {
-        for (var j1 = i + 1; j1 <= i + 3 && j1 < row.length; j1++) {
-          var n1 = parseFloat(String(row[j1]).replace(',', '.'));
-          if (!isNaN(n1) && n1 > 0) {
-            income = n1;
-            break;
-          }
-        }
-      }
-
-      if (valNorm === 'gastos fijos totales' || (valNorm === 'gastos fijos' && fixed === 0)) {
-        for (var j2 = i + 1; j2 <= i + 3 && j2 < row.length; j2++) {
-          var n2 = parseFloat(String(row[j2]).replace(',', '.'));
-          if (!isNaN(n2) && n2 > 0) {
-            fixed = n2;
-            break;
-          }
-        }
-      }
-
-      if (valNorm.indexOf('gastos variables') >= 0 && valNorm.indexOf('total') >= 0) {
-        for (var j3 = i + 1; j3 <= i + 3 && j3 < row.length; j3++) {
-          var n3 = parseFloat(String(row[j3]).replace(',', '.'));
-          if (!isNaN(n3) && n3 > 0) {
-            variable = n3;
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  // Meta ahorro fijada en la plantilla: columna I (9), fila 3
-  var desiredSavings = 0;
+function ensureSpanishLocale(ss) {
   try {
-    desiredSavings = parseFloat(String(ws.getRange(3, 9).getValue()).replace(',', '.')) || 0;
+    if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (ss && ss.getSpreadsheetLocale) {
+      var currentLocale = ss.getSpreadsheetLocale();
+      if (currentLocale !== 'es_ES' && currentLocale !== 'es_es') {
+        ss.setSpreadsheetLocale('es_ES');
+      }
+    }
   } catch (e) {}
-
-  // Salvaguarda para nuevos meses: si income es 0, comprobar directamente C13 (primera fila de ingresos)
-  if (income === 0) {
-    try {
-      var c13Val = parseFloat(String(ws.getRange(13, 3).getValue()).replace(',', '.')) || 0;
-      if (c13Val > 0) {
-        income = c13Val;
-      }
-    } catch (eInc) {}
-  }
-
-  // Salvaguarda: si variable es 0 pero hay filas de gastos variables, sumar rápidamente
-  if (variable === 0) {
-    try {
-      var expCols = findVariableExpenseCols(ws);
-      var lRow = ws.getLastRow();
-      if (lRow >= 13) {
-        var numR = lRow - 12;
-        var amtVals = ws.getRange(13, expCols.amtCol, numR, 1).getValues();
-        var sumVar = 0;
-        for (var v = 0; v < amtVals.length; v++) {
-          var pV = parseFloat(String(amtVals[v][0]).replace(',', '.')) || 0;
-          sumVar += pV;
-        }
-        if (sumVar > 0) {
-          variable = Math.round(sumVar * 100) / 100;
-        }
-      }
-    } catch (eVar) {}
-  }
-
-  var remainingMonth = income - fixed - variable - desiredSavings;
-  var legacyRemaining = income - fixed - variable;
-
-  return {
-    month: ws.getName(),
-    income: income,
-    fixedExpenses: fixed,
-    variableExpenses: variable,
-    totalExpenses: fixed + variable,
-    desiredSavings: desiredSavings,
-    remainingMonth: remainingMonth,
-    remainingForExpenses: legacyRemaining,
-    savings: remainingMonth
-  };
 }
 
+/* ================================================================
+ *  LECTURA INTEGRAL Y RÁPIDA: getMonthData
+ * ================================================================ */
+
 /**
- * Acción unificada y de ultra alto rendimiento que devuelve resumen mensual,
- * gastos variables, gastos fijos e ingresos en UNA SOLA llamada por bloque (~150ms).
- * Si knownRowCount coincide con el número de filas de la hoja, responde casi instantáneamente.
+ * Lee en 1 sola llamada a Sheets todo el contenido del mes:
+ * Resumen, Gastos Variables, Gastos Fijos con casillas, e Ingresos.
  */
 function getMonthData(ss, month, knownRowCount) {
   var ws = findSheet(ss, month);
   if (!ws) return { error: 'Mes no encontrado: ' + month };
 
   var lastRow = ws.getLastRow();
+  var cols = getSheetColumns(ws);
 
-  // Comprobación de filas guardadas ("solo comprobar que hay un mismo número de filas")
-  if (knownRowCount != null && parseInt(knownRowCount, 10) === lastRow) {
-    try {
-      return {
-        success: true,
-        unchanged: true,
-        month: ws.getName(),
-        lastRow: lastRow
-      };
-    } catch (eQ) {}
-  }
+  // Lectura completa en 1 solo bloque en memoria (hasta 150 filas x 13 cols)
+  var maxScan = Math.min(Math.max(lastRow, 25), 250);
+  var maxCols = Math.max(cols.variable.amtCol, 11);
+  var rangeBlock = ws.getRange(1, 1, maxScan, maxCols);
+  var allVals = rangeBlock.getValues();
+  var allFormulas = rangeBlock.getFormulas();
 
-  // Lectura completa en 1 solo bloque de memoria (1 sola llamada a la API de Google Sheets)
-  var maxScan = Math.min(Math.max(lastRow, 25), 150);
-  var maxCols = 13;
-  var allVals = ws.getRange(1, 1, maxScan, maxCols).getValues();
-
-  // 1. Detección automática de columnas
-  var varCatCol = 9;  // Col I por defecto (Marzo a Diciembre)
-  var varAmtCol = 11; // Col K por defecto (Marzo a Diciembre)
-  var fixedCatCol = 5; // Col E
-  var fixedAmtCol = 7; // Col G por defecto (Marzo a Diciembre)
-  var fixedCheckCol = 6; // Col F por defecto (Marzo a Diciembre)
-  var hasCheckbox = true;
-
-  if (maxScan >= 12) {
-    var r12 = allVals[11];
-    var normH12 = normalizeStr(r12[7] || '');
-    var normJ12 = normalizeStr(r12[9] || '');
-    var normF12 = normalizeStr(r12[5] || '');
-    // Si en Col H (idx 7) está 'Categoría' y en Col J (idx 9) 'Cantidad' (Enero/Febrero)
-    if (normH12.indexOf('cat') >= 0 || normJ12.indexOf('cant') >= 0) {
-      varCatCol = 8;
-      varAmtCol = 10;
-      fixedAmtCol = 6;
-      fixedCheckCol = null;
-      hasCheckbox = false;
-    } else if (normF12.indexOf('cant') >= 0) {
-      fixedAmtCol = 6;
-      fixedCheckCol = null;
-      hasCheckbox = false;
-    }
-  }
-
-  // 2. Extraer Gastos Variables
+  // 1. Extraer Gastos Variables (Filas 13 en adelante)
   var expenses = [];
   var totalVarCalculated = 0;
   for (var rV = 12; rV < maxScan; rV++) {
-    var vCat = String(allVals[rV][varCatCol - 1] || '').trim();
-    var vAmt = parseFloat(String(allVals[rV][varAmtCol - 1]).replace(',', '.')) || 0;
+    var vCat = String(allVals[rV][cols.variable.catCol - 1] || '').trim();
+    var vAmt = parseFloat(String(allVals[rV][cols.variable.amtCol - 1]).replace(',', '.')) || 0;
     var vNorm = normalizeStr(vCat);
     if (vNorm.indexOf('total') !== -1 || vNorm.indexOf('subtotal') !== -1) continue;
     if (vCat !== '' || vAmt > 0) {
-      expenses.push({ row: rV + 1, category: vCat || 'General', amount: vAmt });
+      expenses.push({
+        row: rV + 1,
+        category: vCat || 'General',
+        amount: vAmt
+      });
       totalVarCalculated += vAmt;
     }
   }
 
-  // 3. Extraer Gastos Fijos (filas 13 a 21)
+  // 2. Extraer Gastos Fijos (Filas 13 a 21)
   var fixedExpenses = [];
   var totalFixedCalculated = 0;
   var fixedEnd = Math.min(maxScan, 22);
   for (var rF = 12; rF < fixedEnd && rF <= 20; rF++) {
-    var fCat = String(allVals[rF][fixedCatCol - 1] || '').trim();
-    if (!fCat && FIXED_DEFAULT_CATEGORIES[rF + 1]) fCat = FIXED_DEFAULT_CATEGORIES[rF + 1];
+    var rowNum = rF + 1;
+    var fCat = String(allVals[rF][cols.fixed.catCol - 1] || '').trim();
+    if (!fCat && FIXED_DEFAULT_CATEGORIES[rowNum]) fCat = FIXED_DEFAULT_CATEGORIES[rowNum];
     if (!fCat) continue;
-    var checkVal = (hasCheckbox && fixedCheckCol) ? allVals[rF][fixedCheckCol - 1] : true;
-    var isChecked = isCheckboxChecked(checkVal);
-    var fAmt = parseFloat(String(allVals[rF][fixedAmtCol - 1]).replace(',', '.')) || 0;
-    if (fAmt === 0 && FIXED_DEFAULT_AMOUNTS[rF + 1]) fAmt = FIXED_DEFAULT_AMOUNTS[rF + 1];
-    if (isChecked) totalFixedCalculated += fAmt;
+
+    var isChecked = true;
+    if (cols.hasCheckbox && cols.fixed.checkCol) {
+      var checkVal = allVals[rF][cols.fixed.checkCol - 1];
+      isChecked = isCheckboxChecked(checkVal);
+    }
+
+    var fAmt = parseFloat(String(allVals[rF][cols.fixed.amtCol - 1]).replace(',', '.')) || 0;
+    if (fAmt === 0 && allFormulas && allFormulas[rF]) {
+      var fForm = String(allFormulas[rF][cols.fixed.amtCol - 1] || '');
+      var m = fForm.match(/IF\s*\(\s*[^,;]+[,;]\s*([0-9.,]+)/i);
+      if (m && m[1]) {
+        var parsedForm = parseFloat(m[1].replace(',', '.'));
+        if (!isNaN(parsedForm) && parsedForm > 0) {
+          fAmt = parsedForm;
+        }
+      }
+    }
+    if (fAmt === 0 && FIXED_DEFAULT_AMOUNTS[rowNum]) {
+      fAmt = FIXED_DEFAULT_AMOUNTS[rowNum];
+    }
+
+    if (isChecked) {
+      totalFixedCalculated += fAmt;
+    }
+
     fixedExpenses.push({
-      row: rF + 1,
+      row: rowNum,
       category: fCat,
       amount: fAmt,
       active: isChecked,
-      hasCheckbox: hasCheckbox
+      hasCheckbox: cols.hasCheckbox
     });
   }
 
-  // 4. Extraer Ingresos detallados (Col B y Col C)
+  // 3. Extraer Ingresos (Col B y Col C, Filas 13 en adelante)
   var incomes = [];
   var totalIncCalculated = 0;
   for (var rI = 12; rI < maxScan; rI++) {
-    var iCat = String(allVals[rI][1] || '').trim();
-    var iAmt = parseFloat(String(allVals[rI][2]).replace(',', '.')) || 0;
+    var iCat = String(allVals[rI][cols.income.catCol - 1] || '').trim();
+    var iAmt = parseFloat(String(allVals[rI][cols.income.amtCol - 1]).replace(',', '.')) || 0;
     if (iCat !== '' || iAmt > 0) {
       incomes.push({ row: rI + 1, category: iCat || 'Ingreso', amount: iAmt });
       totalIncCalculated += iAmt;
     }
   }
 
-  // 5. Meta de ahorro (Fila 3, Col I = 9)
+  // 4. Meta de ahorro (Fila 3, Col I = 9)
   var desiredSavings = 0;
   if (allVals[2] && allVals[2][8]) {
     desiredSavings = parseFloat(String(allVals[2][8]).replace(',', '.')) || 0;
   }
 
-  // 6. Ingreso total de la fila 10 (C10) o de la suma de filas de ingresos
-  var c10Income = (allVals[9] && allVals[9][2]) ? (parseFloat(String(allVals[9][2]).replace(',', '.')) || 0) : 0;
+  // 5. Ingresos Totales de C10 o de la suma calculada
+  var c10Income = (allVals[9] && allVals[9][cols.income.amtCol - 1])
+    ? (parseFloat(String(allVals[9][cols.income.amtCol - 1]).replace(',', '.')) || 0)
+    : 0;
   var finalIncome = c10Income > 0 ? c10Income : totalIncCalculated;
 
   var totalExpenses = Math.round((totalFixedCalculated + totalVarCalculated) * 100) / 100;
@@ -847,63 +713,515 @@ function getMonthData(ss, month, knownRowCount) {
     lastRow: lastRow,
     expensesCount: expenses.length,
     totalActiveFixed: Math.round(totalFixedCalculated * 100) / 100,
-    hasCheckbox: hasCheckbox
+    hasCheckbox: cols.hasCheckbox
+  };
+}
+
+function getExpenses(ss, month) {
+  var data = getMonthData(ss, month);
+  if (data.error) return data;
+  return { expenses: data.expenses, month: data.month, lastRow: data.lastRow };
+}
+
+function getSummary(ss, month) {
+  var data = getMonthData(ss, month);
+  if (data.error) return data;
+  return data.summary;
+}
+
+function getFixedExpenses(ss, month) {
+  var data = getMonthData(ss, month);
+  if (data.error) return data;
+  return {
+    month: data.month,
+    fixedExpenses: data.fixedExpenses,
+    totalActive: data.totalActiveFixed,
+    hasCheckbox: data.hasCheckbox,
+    summary: data.summary
+  };
+}
+
+/* ================================================================
+ *  MUTACIÓN DE GASTOS VARIABLES: ADD, UPDATE, DELETE
+ * ================================================================ */
+
+/**
+ * Añade un gasto variable al mes con localización instantánea y respuesta inmediata.
+ */
+function addExpense(ss, month, category, amount) {
+  var cleanCat = String(category || '').trim();
+  var parsedAmt = parseFloat(String(amount).replace(',', '.'));
+
+  if (!cleanCat) return { error: 'La categoría no puede estar vacía' };
+  if (isNaN(parsedAmt) || parsedAmt <= 0) return { error: 'Importe inválido' };
+
+  // Salvaguarda: Si la categoría es de tipo ingresos, redirigir a addIncome
+  var normCat = normalizeStr(cleanCat);
+  var incomeKeywords = ['euromar', 'euromar extra', 'bizzum tarjeta rest', 'bizum', 'bizz', 'bizzum', 'nomina', 'sueldo', 'salario', 'ingreso', 'ingresos', 'extra', 'trabajo', 'paga'];
+  if (incomeKeywords.indexOf(normCat) !== -1) {
+    return addIncome(ss, month, cleanCat, parsedAmt);
+  }
+
+  var ws = findSheet(ss, month);
+  if (!ws) return { error: 'Mes no encontrado: ' + month };
+
+  var cols = getSheetColumns(ws);
+  var lastRow = Math.max(ws.getLastRow(), 12);
+  var nextRow = 13;
+
+  // Encontrar la primera fila libre en la columna de gastos variables (Col I o Col H)
+  if (lastRow >= 13) {
+    var numRows = lastRow - 12;
+    var catVals = ws.getRange(13, cols.variable.catCol, numRows, 1).getValues();
+    nextRow = lastRow + 1;
+    for (var i = 0; i < catVals.length; i++) {
+      if (String(catVals[i][0] || '').trim() === '') {
+        nextRow = i + 13;
+        break;
+      }
+    }
+  }
+
+  // Asegurar filas en la hoja
+  if (nextRow > ws.getMaxRows()) {
+    ws.insertRowsAfter(ws.getMaxRows(), 10);
+  }
+
+  // Escribir categoría e importe directamente
+  var catCell = ws.getRange(nextRow, cols.variable.catCol);
+  var amtCell = ws.getRange(nextRow, cols.variable.amtCol);
+
+  try {
+    catCell.setValue(cleanCat);
+  } catch (eCat) {
+    try {
+      catCell.clearDataValidations();
+      catCell.setValue(cleanCat);
+    } catch (eCat2) {}
+  }
+
+  amtCell.setValue(parsedAmt);
+
+  // Asegurar que la fórmula en la celda de total esté activa (K10 o J10)
+  try {
+    var totColLetter = cols.variable.amtCol === 10 ? 'J' : 'K';
+    var totCell = ws.getRange(10, cols.variable.amtCol);
+    var curF = String(totCell.getFormula() || '');
+    if (!curF || curF.indexOf('SUM') === -1) {
+      totCell.setFormula('=SUM(' + totColLetter + '13:' + totColLetter + '993)');
+    }
+  } catch (eTot) {}
+
+  SpreadsheetApp.flush();
+
+  // Devolver inmediatamente los datos actualizados del mes
+  var updated = getMonthData(ss, ws.getName());
+
+  return {
+    success: true,
+    row: nextRow,
+    category: cleanCat,
+    amount: parsedAmt,
+    month: ws.getName(),
+    summary: updated.summary,
+    expenses: updated.expenses,
+    lastRow: updated.lastRow
   };
 }
 
 /**
- * Localiza con exactitud las columnas de Ingresos (Col B: Categoría, Col C: Cantidad/Importe).
+ * Modifica un gasto variable existente.
+ * Sabe exactamente en qué fila y columna escribir de forma directa y ultra rápida.
  */
-function findIncomeCols(ws) {
-  var catCol = 2; // Col B por defecto
-  var amtCol = 3; // Col C por defecto
-  try {
-    var scanRows = Math.min(ws.getLastRow(), 14);
-    if (scanRows >= 10) {
-      var headerMatrix = ws.getRange(10, 1, scanRows - 9, Math.min(10, ws.getLastColumn())).getValues();
-      for (var r = 0; r < headerMatrix.length; r++) {
-        for (var c = 0; c < headerMatrix[r].length; c++) {
-          var val = normalizeStr(headerMatrix[r][c]);
-          if (val.indexOf('ingres') !== -1 && val.indexOf('gasto') === -1) {
-            catCol = c + 1;
-            amtCol = c + 2;
-            return { catCol: catCol, amtCol: amtCol };
+function updateExpense(ss, month, row, oldCategory, oldAmount, newCategory, newAmount) {
+  var cleanNewCat = String(newCategory || '').trim();
+  var parsedNewAmt = parseFloat(String(newAmount).replace(',', '.'));
+
+  if (!cleanNewCat) return { error: 'La categoría no puede estar vacía' };
+  if (isNaN(parsedNewAmt) || parsedNewAmt <= 0) return { error: 'Importe inválido' };
+
+  var ws = findSheet(ss, month);
+  if (!ws) return { error: 'Mes no encontrado: ' + month };
+
+  var cols = getSheetColumns(ws);
+  var targetRow = parseInt(row, 10);
+  var lastRow = Math.max(ws.getLastRow(), 13);
+
+  var found = false;
+  var oldNorm = normalizeStr(oldCategory);
+  var parsedOldAmt = parseFloat(String(oldAmount).replace(',', '.')) || 0;
+
+  // 1. Comprobación directa en la fila especificada
+  if (!isNaN(targetRow) && targetRow >= 13 && targetRow <= ws.getMaxRows()) {
+    var curCat = String(ws.getRange(targetRow, cols.variable.catCol).getValue() || '').trim();
+    var curAmt = parseFloat(String(ws.getRange(targetRow, cols.variable.amtCol).getValue()).replace(',', '.')) || 0;
+
+    // Si coincide con oldCategory o si ya fue actualizada con newCategory/newAmount
+    if (normalizeStr(curCat) === oldNorm || Math.abs(curAmt - parsedOldAmt) < 0.02 ||
+        (normalizeStr(curCat) === normalizeStr(cleanNewCat) && Math.abs(curAmt - parsedNewAmt) < 0.02)) {
+      found = true;
+    }
+  }
+
+  // 2. Si la fila se movió o no coincidió exactamente, buscar en memoria rápidamente
+  if (!found) {
+    var numRows = lastRow - 12;
+    if (numRows > 0) {
+      var catVals = ws.getRange(13, cols.variable.catCol, numRows, 1).getValues();
+      var amtVals = ws.getRange(13, cols.variable.amtCol, numRows, 1).getValues();
+      var bestDist = Infinity;
+
+      for (var i = 0; i < catVals.length; i++) {
+        var r = i + 13;
+        var rCat = normalizeStr(catVals[i][0] || '');
+        var rAmt = parseFloat(String(amtVals[i][0]).replace(',', '.')) || 0;
+
+        if (rCat === oldNorm && Math.abs(rAmt - parsedOldAmt) < 0.05) {
+          var dist = isNaN(targetRow) ? i : Math.abs(r - targetRow);
+          if (dist < bestDist) {
+            bestDist = dist;
+            targetRow = r;
+            found = true;
+          }
+        }
+      }
+
+      // Si no encontramos por categoría+importe, intentar por categoría si es única
+      if (!found && oldNorm) {
+        for (var j = 0; j < catVals.length; j++) {
+          var r2 = j + 13;
+          var rCat2 = normalizeStr(catVals[j][0] || '');
+          if (rCat2 === oldNorm) {
+            targetRow = r2;
+            found = true;
+            break;
           }
         }
       }
     }
-  } catch (e) {}
-  return { catCol: catCol, amtCol: amtCol };
+  }
+
+  // Salvaguarda: Si aún no se encontró pero el número de fila es válido, usar la fila solicitada
+  if (!found && !isNaN(targetRow) && targetRow >= 13 && targetRow <= ws.getMaxRows()) {
+    found = true;
+  }
+
+  if (!found || isNaN(targetRow) || targetRow < 13) {
+    return { error: 'No se encontró el gasto a actualizar' };
+  }
+
+  // Escribir directamente los nuevos valores
+  var catCell = ws.getRange(targetRow, cols.variable.catCol);
+  var amtCell = ws.getRange(targetRow, cols.variable.amtCol);
+
+  try {
+    catCell.setValue(cleanNewCat);
+  } catch (e) {
+    try {
+      catCell.clearDataValidations();
+      catCell.setValue(cleanNewCat);
+    } catch (e2) {}
+  }
+
+  amtCell.setValue(parsedNewAmt);
+  SpreadsheetApp.flush();
+
+  // Devolver el estado fresco para que la app se actualice sin peticiones adicionales
+  var updated = getMonthData(ss, ws.getName());
+
+  return {
+    success: true,
+    row: targetRow,
+    category: cleanNewCat,
+    amount: parsedNewAmt,
+    month: ws.getName(),
+    summary: updated.summary,
+    expenses: updated.expenses,
+    lastRow: updated.lastRow
+  };
 }
 
 /**
- * Añade un ingreso individual al mes especificado escribiéndolo en las columnas correspondientes
- * de Ingresos: Columna B (Categoría) y Columna C (Cantidad/Importe).
- * Encuentra la primera fila libre desde la fila 13 en adelante y actualiza la fórmula en C10.
+ * Elimina un gasto variable limpiando su celda de categoría e importe.
+ */
+function deleteExpense(ss, month, row, category, amount) {
+  var ws = findSheet(ss, month);
+  if (!ws) return { error: 'Mes no encontrado: ' + month };
+
+  var cols = getSheetColumns(ws);
+  var targetRow = parseInt(row, 10);
+  var lastRow = Math.max(ws.getLastRow(), 13);
+
+  var found = false;
+  var catNorm = normalizeStr(category);
+  var parsedAmt = parseFloat(String(amount).replace(',', '.')) || 0;
+
+  // 1. Comprobación en la fila solicitada
+  if (!isNaN(targetRow) && targetRow >= 13 && targetRow <= ws.getMaxRows()) {
+    var curCat = String(ws.getRange(targetRow, cols.variable.catCol).getValue() || '').trim();
+    var curAmt = parseFloat(String(ws.getRange(targetRow, cols.variable.amtCol).getValue()).replace(',', '.')) || 0;
+
+    if (normalizeStr(curCat) === catNorm || Math.abs(curAmt - parsedAmt) < 0.02) {
+      found = true;
+    }
+  }
+
+  // 2. Si no coincide exactamente, buscar en el rango
+  if (!found) {
+    var numRows = lastRow - 12;
+    if (numRows > 0) {
+      var catVals = ws.getRange(13, cols.variable.catCol, numRows, 1).getValues();
+      var amtVals = ws.getRange(13, cols.variable.amtCol, numRows, 1).getValues();
+      var bestDist = Infinity;
+
+      for (var i = 0; i < catVals.length; i++) {
+        var r = i + 13;
+        var rCat = normalizeStr(catVals[i][0] || '');
+        var rAmt = parseFloat(String(amtVals[i][0]).replace(',', '.')) || 0;
+
+        if (rCat === catNorm && Math.abs(rAmt - parsedAmt) < 0.05) {
+          var dist = isNaN(targetRow) ? i : Math.abs(r - targetRow);
+          if (dist < bestDist) {
+            bestDist = dist;
+            targetRow = r;
+            found = true;
+          }
+        }
+      }
+    }
+  }
+
+  if (!found && !isNaN(targetRow) && targetRow >= 13 && targetRow <= ws.getMaxRows()) {
+    found = true;
+  }
+
+  if (!found || isNaN(targetRow) || targetRow < 13) {
+    return { error: 'No se encontró el gasto a eliminar' };
+  }
+
+  // Limpiar contenido de la categoría e importe
+  ws.getRange(targetRow, cols.variable.catCol).clearContent();
+  ws.getRange(targetRow, cols.variable.amtCol).clearContent();
+  SpreadsheetApp.flush();
+
+  var updated = getMonthData(ss, ws.getName());
+
+  return {
+    success: true,
+    row: targetRow,
+    category: category,
+    amount: parsedAmt,
+    month: ws.getName(),
+    summary: updated.summary,
+    expenses: updated.expenses,
+    lastRow: updated.lastRow
+  };
+}
+
+/* ================================================================
+ *  GESTIÓN DE GASTOS FIJOS Y CASILLAS (CHECKBOXES)
+ * ================================================================ */
+
+/**
+ * Modifica el estado de la casilla de un gasto fijo (Marzo a Diciembre: Columna F).
+ * Respuesta ultra rápida (< 250ms) y sin bucles lentos de locale.
+ */
+function setFixedExpenseStatus(ss, month, row, active) {
+  var ws = findSheet(ss, month);
+  if (!ws) return { error: 'Mes no encontrado: ' + month };
+
+  var cols = getSheetColumns(ws);
+  var targetRow = parseInt(row, 10);
+  if (isNaN(targetRow) || targetRow < 13 || targetRow > 25) {
+    return { error: 'Fila de gasto fijo inválida: ' + row };
+  }
+
+  var isActive = (active === true || active === 'true' || active === 1 || active === '1');
+
+  if (cols.hasCheckbox && cols.fixed.checkCol) {
+    // 1. Escribir booleano en Col F (6)
+    ws.getRange(targetRow, cols.fixed.checkCol).setValue(isActive);
+
+    // 2. Comprobar que Col G (7) tenga la fórmula =IF(F#, importe, 0)
+    var amtCell = ws.getRange(targetRow, cols.fixed.amtCol);
+    var curF = String(amtCell.getFormula() || '');
+    if (!curF || (curF.indexOf('IF') === -1 && curF.indexOf('SI') === -1)) {
+      var defaultAmt = FIXED_DEFAULT_AMOUNTS[targetRow] || 0;
+      var curVal = parseFloat(String(amtCell.getValue()).replace(',', '.')) || defaultAmt;
+      amtCell.setFormula('=IF(F' + targetRow + ', ' + curVal + ', 0)');
+    }
+  } else {
+    // En meses sin casilla (Enero/Febrero)
+    if (!isActive) {
+      ws.getRange(targetRow, cols.fixed.amtCol).setValue(0);
+    }
+  }
+
+  SpreadsheetApp.flush();
+
+  var updated = getMonthData(ss, ws.getName());
+
+  return {
+    success: true,
+    month: ws.getName(),
+    row: targetRow,
+    active: isActive,
+    summary: updated.summary,
+    fixedExpenses: updated.fixedExpenses,
+    totalActive: updated.totalActiveFixed
+  };
+}
+
+/**
+ * Modifica el importe de un gasto fijo en la fórmula de la Columna G (=IF(F#, importe, 0)).
+ * Petición directa, rápida y segura.
+ */
+function setFixedExpenseAmount(ss, month, row, newAmount, newCategory) {
+  var ws = findSheet(ss, month);
+  if (!ws) return { error: 'Mes no encontrado: ' + month };
+
+  var cols = getSheetColumns(ws);
+  var targetRow = parseInt(row, 10);
+  if (isNaN(targetRow) || targetRow < 13 || targetRow > 25) {
+    return { error: 'Fila de gasto fijo inválida: ' + row };
+  }
+
+  var numAmount = parseFloat(String(newAmount).replace(',', '.'));
+  if (isNaN(numAmount) || numAmount < 0) {
+    return { error: 'Importe numérico inválido: ' + newAmount };
+  }
+
+  // 1. Actualizar nombre en Col E si se especificó
+  if (newCategory && String(newCategory).trim()) {
+    try {
+      ws.getRange(targetRow, cols.fixed.catCol).setValue(String(newCategory).trim());
+    } catch (e) {}
+  }
+
+  // 2. Actualizar importe en Col G (fórmula condicional) o Col F
+  var amtCell = ws.getRange(targetRow, cols.fixed.amtCol);
+  if (cols.hasCheckbox && cols.fixed.checkCol) {
+    amtCell.setFormula('=IF(F' + targetRow + ', ' + numAmount + ', 0)');
+  } else {
+    amtCell.setValue(numAmount);
+  }
+
+  SpreadsheetApp.flush();
+
+  var updated = getMonthData(ss, ws.getName());
+
+  return {
+    success: true,
+    status: 'ok',
+    month: ws.getName(),
+    row: targetRow,
+    newAmount: numAmount,
+    summary: updated.summary,
+    fixedExpenses: updated.fixedExpenses,
+    totalActive: updated.totalActiveFixed
+  };
+}
+
+/**
+ * Actualiza múltiples casillas de gastos fijos en Columna F en una sola llamada en bloque.
+ */
+function setFixedExpensesBatch(ss, month, updates) {
+  var ws = findSheet(ss, month);
+  if (!ws) return { error: 'Mes no encontrado: ' + month };
+
+  var cols = getSheetColumns(ws);
+  if (!Array.isArray(updates) || updates.length === 0) {
+    return { error: 'Lista de actualizaciones vacía' };
+  }
+
+  for (var i = 0; i < updates.length; i++) {
+    var u = updates[i];
+    var row = parseInt(u.row, 10);
+    var active = (u.active === true || u.active === 'true' || u.active === 1 || u.active === '1');
+    if (!isNaN(row) && row >= 13 && row <= 25) {
+      if (cols.hasCheckbox && cols.fixed.checkCol) {
+        ws.getRange(row, cols.fixed.checkCol).setValue(active);
+      } else {
+        if (!active) ws.getRange(row, cols.fixed.amtCol).setValue(0);
+      }
+    }
+  }
+
+  SpreadsheetApp.flush();
+
+  var updated = getMonthData(ss, ws.getName());
+
+  return {
+    success: true,
+    month: ws.getName(),
+    summary: updated.summary,
+    fixedExpenses: updated.fixedExpenses,
+    totalActive: updated.totalActiveFixed
+  };
+}
+
+/**
+ * Restaura todas las fórmulas de Gastos Fijos en Columna G: =IF(F#, importe, 0)
+ * y asegura que Columna F contenga casillas de verificación válidas.
+ */
+function repairFixedExpenseFormulas(ss, month, forceAll) {
+  var ws = findSheet(ss, month);
+  if (!ws) return { error: 'Mes no encontrado: ' + month };
+
+  var cols = getSheetColumns(ws);
+  var restored = 0;
+
+  if (cols.hasCheckbox && cols.fixed.checkCol) {
+    for (var row = 13; row <= 21; row++) {
+      var amtCell = ws.getRange(row, cols.fixed.amtCol); // Col G
+      var curF = String(amtCell.getFormula() || '');
+      var defaultAmt = FIXED_DEFAULT_AMOUNTS[row] || 0;
+
+      var needsUpdate = forceAll || !curF || (curF.indexOf('IF') === -1 && curF.indexOf('SI') === -1);
+      if (needsUpdate) {
+        var curVal = parseFloat(String(amtCell.getValue()).replace(',', '.')) || defaultAmt;
+        amtCell.setFormula('=IF(F' + row + ', ' + curVal + ', 0)');
+        restored++;
+      }
+    }
+    SpreadsheetApp.flush();
+  }
+
+  var updated = getMonthData(ss, ws.getName());
+
+  return {
+    success: true,
+    month: ws.getName(),
+    restored: restored,
+    summary: updated.summary,
+    fixedExpenses: updated.fixedExpenses,
+    totalActive: updated.totalActiveFixed
+  };
+}
+
+/* ================================================================
+ *  GESTIÓN DE INGRESOS Y META DE AHORRO
+ * ================================================================ */
+
+/**
+ * Añade un ingreso a las columnas correspondientes de Ingresos (Col B y Col C).
  */
 function addIncome(ss, month, category, amount) {
-  var cleanCat = String(category || '').trim();
+  var cleanCat = String(category || '').trim() || 'Euromar';
   var parsedAmt = parseFloat(String(amount).replace(',', '.'));
 
-  if (!cleanCat) cleanCat = 'Euromar';
   if (isNaN(parsedAmt) || parsedAmt <= 0) return { error: 'Importe de ingreso inválido' };
 
   var ws = findSheet(ss, month);
   if (!ws) return { error: 'Mes no encontrado: ' + month };
 
-  var cols = findIncomeCols(ws);
-  var targetRow = 13;
-  var maxScan = Math.max(ws.getLastRow(), 35);
-  var numRows = maxScan - 12;
+  var cols = getSheetColumns(ws);
+  var maxScan = Math.max(ws.getLastRow(), 25);
+  var targetRow = maxScan + 1;
 
-  var bVals = ws.getRange(13, cols.catCol, numRows, 1).getValues();
-  var cVals = ws.getRange(13, cols.amtCol, numRows, 1).getValues();
-
-  targetRow = maxScan + 1;
+  var bVals = ws.getRange(13, cols.income.catCol, maxScan - 12, 1).getValues();
   for (var i = 0; i < bVals.length; i++) {
-    var bItem = String(bVals[i][0] || '').trim();
-    var cItem = parseFloat(String(cVals[i][0]).replace(',', '.')) || 0;
-    if (bItem === '' && cItem === 0) {
+    if (String(bVals[i][0] || '').trim() === '') {
       targetRow = i + 13;
       break;
     }
@@ -913,35 +1231,33 @@ function addIncome(ss, month, category, amount) {
     ws.insertRowsAfter(ws.getMaxRows(), 5);
   }
 
-  // 1. Asignar categoría en Col B con total tolerancia a validaciones
-  setSafeIncomeCategory(ws, targetRow, cols.catCol, cleanCat);
+  var catCell = ws.getRange(targetRow, cols.income.catCol);
+  var amtCell = ws.getRange(targetRow, cols.income.amtCol);
 
-  // 2. Asignar importe en Col C
   try {
-    ws.getRange(targetRow, cols.amtCol).setValue(parsedAmt);
-  } catch (eAmt) {
+    catCell.setValue(cleanCat);
+  } catch (e) {
     try {
-      ws.getRange(targetRow, cols.amtCol).clearDataValidations();
-      ws.getRange(targetRow, cols.amtCol).setValue(parsedAmt);
-    } catch (eAmt2) {}
+      catCell.clearDataValidations();
+      catCell.setValue(cleanCat);
+    } catch (e2) {}
   }
 
-  // 3. Asegurar fórmula en C10 =SUM(C13:C993)
+  amtCell.setValue(parsedAmt);
+
+  // Asegurar fórmula en C10
   try {
-    var cellC10 = ws.getRange(10, cols.amtCol);
-    var formula = String(cellC10.getFormula() || '');
-    if (!formula || (formula.indexOf('SUM') === -1 && formula.indexOf('SUMA') === -1)) {
-      try {
-        cellC10.setFormula('=SUM(C13:C993)');
-      } catch (eF1) {
-        try { cellC10.setFormula('=SUMA(C13:C993)'); } catch (eF2) {}
-      }
+    var c10 = ws.getRange(10, cols.income.amtCol);
+    var curF = String(c10.getFormula() || '');
+    if (!curF || curF.indexOf('SUM') === -1) {
+      c10.setFormula('=SUM(C13:C993)');
     }
-  } catch (eF) {}
+  } catch (eTot) {}
 
   SpreadsheetApp.flush();
 
   var updated = getMonthData(ss, ws.getName());
+
   return {
     success: true,
     row: targetRow,
@@ -956,231 +1272,67 @@ function addIncome(ss, month, category, amount) {
 }
 
 /**
- * Añade un gasto variable al mes indicado con protección total contra fallos de validación.
+ * Establece o actualiza los ingresos totales fijando la fila principal de ingresos (C13).
  */
-function addExpense(ss, month, category, amount) {
-  var cleanCat = String(category || '').trim();
+function setTotalIncome(ss, month, amount, optionalCategory) {
   var parsedAmt = parseFloat(String(amount).replace(',', '.'));
-
-  if (!cleanCat) return { error: 'La categoría no puede estar vacía' };
-  if (isNaN(parsedAmt) || parsedAmt <= 0) return { error: 'Importe inválido' };
-
-  // Salvaguarda: Si la categoría ingresada corresponde a ingresos, escribir automáticamente en Col B y C
-  var normCat = normalizeStr(cleanCat);
-  var incomeKeywords = ['euromar', 'euromar extra', 'bizzum tarjeta rest', 'bizum', 'bizz', 'bizzum', 'nomina', 'sueldo', 'salario', 'ingreso', 'ingresos', 'extra', 'trabajo', 'paga'];
-  if (incomeKeywords.indexOf(normCat) !== -1) {
-    return addIncome(ss, month, cleanCat, parsedAmt);
+  if (isNaN(parsedAmt) || parsedAmt < 0) {
+    return { error: 'Cantidad de ingresos inválida: ' + amount };
   }
 
   var ws = findSheet(ss, month);
-  if (!ws) return { error: 'Mes no encontrado: ' + month };
+  if (!ws) return { error: 'No se encontró la hoja para el mes: ' + month };
 
-  // Garantizar que la categoría exista en la lista y no tenga espacios conflictivos
-  var canonicalCat = ensureCategoryInCategoriesSheet(ss, cleanCat);
+  var cols = getSheetColumns(ws);
 
-  var cols = findVariableExpenseCols(ws);
-  var lastRow = Math.max(ws.getLastRow(), 12);
-  var nextRow = 13;
-
-  if (lastRow >= 13) {
-    var numRows = lastRow - 12;
-    var catData = ws.getRange(13, cols.catCol, numRows, 1).getValues();
-
-    nextRow = lastRow + 1; // Por defecto al final
-    for (var i = 0; i < catData.length; i++) {
-      var existingCat = String(catData[i][0]).trim();
-      if (existingCat === '') {
-        nextRow = i + 13; // Primera fila disponible
-        break;
-      }
-    }
-  }
-
-  // Asegurar que la hoja tenga suficientes filas
-  if (nextRow > ws.getMaxRows()) {
-    ws.insertRowsAfter(ws.getMaxRows(), 10);
-  }
-
-  var catCell = ws.getRange(nextRow, cols.catCol);
-  var amtCell = ws.getRange(nextRow, cols.amtCol);
-
-  // Escribir categoría con salvaguarda contra errores de validación de Google Sheets
+  // 1. Escribir concepto en B13
+  var catCell = ws.getRange(13, cols.income.catCol);
   try {
-    catCell.setValue(canonicalCat);
-  } catch (valErr) {
-    try {
-      catCell.clearDataValidations();
-      catCell.setValue(canonicalCat);
-    } catch (retryErr) {
-      catCell.setValue(cleanCat);
-    }
-  }
-
-  amtCell.setValue(parsedAmt);
-  SpreadsheetApp.flush();
-
-  // Devolver el resumen y lista actualizados para evitar llamadas de red redundantes
-  var updatedData = getMonthData(ss, ws.getName());
-
-  return {
-    success: true,
-    row: nextRow,
-    category: canonicalCat,
-    amount: parsedAmt,
-    month: ws.getName(),
-    summary: updatedData.summary,
-    expenses: updatedData.expenses || [],
-    lastRow: updatedData.lastRow
-  };
-}
-
-/**
- * Actualiza la categoría y/o importe de un gasto variable existente.
- */
-function updateExpense(ss, month, row, oldCategory, oldAmount, newCategory, newAmount) {
-  var cleanNewCat = String(newCategory || '').trim();
-  var parsedNewAmt = parseFloat(String(newAmount).replace(',', '.'));
-
-  if (!cleanNewCat) return { error: 'La categoría no puede estar vacía' };
-  if (isNaN(parsedNewAmt) || parsedNewAmt <= 0) return { error: 'Importe inválido' };
-
-  var ws = findSheet(ss, month);
-  if (!ws) return { error: 'Mes no encontrado: ' + month };
-
-  var canonicalCat = ensureCategoryInCategoriesSheet(ss, cleanNewCat);
-  var cols = findVariableExpenseCols(ws);
-
-  var targetRow = row;
-  var currentCat = '';
-  var currentAmt = 0;
-
-  if (row >= 13 && row <= ws.getMaxRows()) {
-    currentCat = String(ws.getRange(row, cols.catCol).getValue()).trim();
-    currentAmt = parseFloat(String(ws.getRange(row, cols.amtCol).getValue()).replace(',', '.')) || 0;
-  }
-
-  var oldNorm = normalizeStr(oldCategory);
-  var parsedOldAmt = parseFloat(String(oldAmount).replace(',', '.')) || 0;
-
-  if (normalizeStr(currentCat) !== oldNorm || Math.abs(currentAmt - parsedOldAmt) > 0.01) {
-    var lastRow = ws.getLastRow();
-    targetRow = -1;
-
-    if (lastRow >= 13) {
-      var numRows = lastRow - 12;
-      var catData = ws.getRange(13, cols.catCol, numRows, 1).getValues();
-      var amtData = ws.getRange(13, cols.amtCol, numRows, 1).getValues();
-      var bestDist = Infinity;
-
-      for (var i = 0; i < catData.length; i++) {
-        var r = i + 13;
-        var rCat = String(catData[i][0]).trim();
-        var rAmt = parseFloat(String(amtData[i][0]).replace(',', '.')) || 0;
-
-        if (normalizeStr(rCat) === oldNorm && Math.abs(rAmt - parsedOldAmt) < 0.01) {
-          var dist = Math.abs(r - row);
-          if (dist < bestDist) {
-            bestDist = dist;
-            targetRow = r;
-          }
-        }
-      }
-    }
-
-    if (targetRow === -1) {
-      return { error: 'No se encontró el gasto a actualizar' };
-    }
-  }
-
-  var catCell = ws.getRange(targetRow, cols.catCol);
-  var amtCell = ws.getRange(targetRow, cols.amtCol);
-
-  try {
-    catCell.setValue(canonicalCat);
+    catCell.setValue(optionalCategory || 'Euromar');
   } catch (e) {
     try {
       catCell.clearDataValidations();
-      catCell.setValue(canonicalCat);
-    } catch (e2) {
-      catCell.setValue(cleanNewCat);
-    }
+      catCell.setValue(optionalCategory || 'Euromar');
+    } catch (e2) {}
   }
 
-  amtCell.setValue(parsedNewAmt);
+  // 2. Escribir importe en C13
+  ws.getRange(13, cols.income.amtCol).setValue(parsedAmt);
+
+  // 3. Limpiar ingresos secundarios antiguos en filas 14 a 30
+  try {
+    var lastRow = Math.min(ws.getLastRow(), 30);
+    if (lastRow >= 14) {
+      ws.getRange(14, cols.income.catCol, lastRow - 13, 2).clearContent();
+    }
+  } catch (eClear) {}
+
+  // 4. Asegurar fórmula en C10
+  try {
+    var c10 = ws.getRange(10, cols.income.amtCol);
+    var curF = String(c10.getFormula() || '');
+    if (!curF || curF.indexOf('SUM') === -1) {
+      c10.setFormula('=SUM(C13:C993)');
+    }
+  } catch (eF) {}
+
+  SpreadsheetApp.flush();
+
+  var updated = getMonthData(ss, ws.getName());
 
   return {
     success: true,
-    row: targetRow,
-    category: canonicalCat,
-    amount: parsedNewAmt,
-    month: ws.getName()
+    month: ws.getName(),
+    income: parsedAmt,
+    summary: updated.summary,
+    expenses: updated.expenses,
+    incomes: updated.incomes,
+    lastRow: updated.lastRow
   };
 }
 
 /**
- * Elimina un gasto variable del mes indicado.
- */
-function deleteExpense(ss, month, row, category, amount) {
-  var ws = findSheet(ss, month);
-  if (!ws) return { error: 'Mes no encontrado: ' + month };
-
-  var cols = findVariableExpenseCols(ws);
-  var targetRow = row;
-  var currentCat = '';
-  var currentAmt = 0;
-
-  if (row >= 13 && row <= ws.getMaxRows()) {
-    currentCat = String(ws.getRange(row, cols.catCol).getValue()).trim();
-    currentAmt = parseFloat(String(ws.getRange(row, cols.amtCol).getValue()).replace(',', '.')) || 0;
-  }
-
-  var catNorm = normalizeStr(category);
-  var parsedAmt = parseFloat(String(amount).replace(',', '.')) || 0;
-
-  if (normalizeStr(currentCat) !== catNorm || Math.abs(currentAmt - parsedAmt) > 0.01) {
-    var lastRow = ws.getLastRow();
-    targetRow = -1;
-
-    if (lastRow >= 13) {
-      var numRows = lastRow - 12;
-      var catData = ws.getRange(13, cols.catCol, numRows, 1).getValues();
-      var amtData = ws.getRange(13, cols.amtCol, numRows, 1).getValues();
-      var bestDist = Infinity;
-
-      for (var i = 0; i < catData.length; i++) {
-        var r = i + 13;
-        var rCat = String(catData[i][0]).trim();
-        var rAmt = parseFloat(String(amtData[i][0]).replace(',', '.')) || 0;
-
-        if (normalizeStr(rCat) === catNorm && Math.abs(rAmt - parsedAmt) < 0.01) {
-          var dist = Math.abs(r - row);
-          if (dist < bestDist) {
-            bestDist = dist;
-            targetRow = r;
-          }
-        }
-      }
-    }
-
-    if (targetRow === -1) {
-      return { error: 'No se encontró el gasto a eliminar' };
-    }
-  }
-
-  ws.getRange(targetRow, cols.catCol).clearContent();
-  ws.getRange(targetRow, cols.amtCol).clearContent();
-
-  return {
-    success: true,
-    row: targetRow,
-    category: category,
-    amount: parsedAmt,
-    month: ws.getName()
-  };
-}
-
-/**
- * Establece o actualiza la meta de ahorro para el mes indicado.
+ * Establece o actualiza la meta de ahorro para el mes en la celda I3.
  */
 function setSavingsGoal(ss, month, amount) {
   var parsedAmt = parseFloat(String(amount).replace(',', '.'));
@@ -1189,884 +1341,30 @@ function setSavingsGoal(ss, month, amount) {
   }
 
   var ws = findSheet(ss, month);
-  if (!ws) {
-    return { error: 'No se encontró la hoja para el mes: ' + month };
-  }
+  if (!ws) return { error: 'No se encontró la hoja para el mes: ' + month };
 
-  // Buscar la celda de la meta de ahorro en las filas 1 a 6
-  var targetRow = 3;
-  var targetCol = 9; // Columna I por defecto
-  var found = false;
-
-  var topData = ws.getRange(1, 1, 6, Math.min(15, ws.getLastColumn())).getValues();
-  for (var r = 0; r < topData.length; r++) {
-    for (var c = 0; c < topData[r].length; c++) {
-      var cellVal = normalizeStr(topData[r][c]);
-      if (cellVal.indexOf('ahorrar') !== -1 && cellVal.indexOf('cantidad') !== -1) {
-        targetRow = r + 1;
-        targetCol = 9;
-        found = true;
-        break;
-      }
-    }
-    if (found) break;
-  }
-
-  // Establecer el valor
-  try {
-    ws.getRange(targetRow, targetCol).setValue(parsedAmt);
-  } catch (eGoalVal) {
-    try {
-      ws.getRange(targetRow, targetCol).clearDataValidations();
-      ws.getRange(targetRow, targetCol).setValue(parsedAmt);
-    } catch (eGoalVal2) {}
-  }
-  try {
-    var valH = ws.getRange(targetRow, 8).getValue();
-    if (valH !== '' && !isNaN(parseFloat(String(valH).replace(',', '.')))) {
-      ws.getRange(targetRow, 8).setValue(parsedAmt);
-    }
-  } catch (e) {}
-
+  // Fila 3, Columna 9 (I3)
+  ws.getRange(3, 9).setValue(parsedAmt);
   SpreadsheetApp.flush();
 
-  var sum = getSummary(ss, ws.getName(), ws);
-  if (sum.desiredSavings !== parsedAmt) {
-    sum.desiredSavings = parsedAmt;
-    sum.remainingMonth = (sum.income || 0) - (sum.totalExpenses || 0) - parsedAmt;
-    sum.savings = sum.remainingMonth;
-  }
+  var updated = getMonthData(ss, ws.getName());
 
   return {
     success: true,
     month: ws.getName(),
     desiredSavings: parsedAmt,
-    summary: sum
+    summary: updated.summary
   };
-}
-
-/**
- * Asigna una categoría en la celda de concepto de ingresos (ej. B13) con máxima compatibilidad y
- * protección frente a cualquier regla de validación de datos (listas desplegables, rangos, etc.).
- * Si la celda ya tiene texto, la preserva. Si está vacía, determina el valor admitido por la validación
- * o relaja la validación para evitar que lance una excepción en Google Sheets.
- */
-function setSafeIncomeCategory(ws, row, col, preferredCat) {
-  var cell = ws.getRange(row, col);
-  var current = '';
-  try {
-    current = String(cell.getValue() || '').trim();
-  } catch (eGet) {}
-
-  // Si la celda ya tiene un concepto o categoría asignada, conservarla
-  if (current) {
-    return current;
-  }
-
-  var rule = null;
-  try {
-    rule = cell.getDataValidation();
-  } catch (eRule) {}
-
-  var validOptions = [];
-  if (rule) {
-    try {
-      var cType = rule.getCriteriaType();
-      var cVals = rule.getCriteriaValues();
-      if (cType === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST && cVals && cVals[0]) {
-        var list = cVals[0];
-        for (var i = 0; i < list.length; i++) {
-          var item = String(list[i] || '').trim();
-          if (item) validOptions.push(item);
-        }
-      } else if (cType === SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE && cVals && cVals[0]) {
-        var range = cVals[0];
-        if (range && range.getValues) {
-          var rVals = range.getValues();
-          for (var r = 0; r < rVals.length; r++) {
-            for (var c = 0; c < rVals[r].length; c++) {
-              var itemR = String(rVals[r][c] || '').trim();
-              if (itemR) validOptions.push(itemR);
-            }
-          }
-        }
-      }
-    } catch (eCriteria) {}
-  }
-
-  // Lista de candidatos ordenada por prioridad
-  var candidates = [];
-  if (preferredCat) candidates.push(preferredCat);
-
-  if (validOptions.length > 0) {
-    var prefNorm = normalizeStr(preferredCat || 'euromar');
-    for (var vo = 0; vo < validOptions.length; vo++) {
-      if (normalizeStr(validOptions[vo]) === prefNorm) {
-        candidates.unshift(validOptions[vo]);
-        break;
-      }
-    }
-    // Si no coincide exactamente, añadir la primera opción válida como alta prioridad para evitar fallos de validación
-    if (candidates.indexOf(validOptions[0]) === -1) {
-      candidates.push(validOptions[0]);
-    }
-    var keywords = ['euromar', 'bizzum', 'bizum', 'nomina', 'salario', 'sueldo', 'ingreso', 'ingresos', 'trabajo'];
-    for (var k = 0; k < keywords.length; k++) {
-      for (var vi = 0; vi < validOptions.length; vi++) {
-        if (normalizeStr(validOptions[vi]).indexOf(keywords[k]) >= 0) {
-          if (candidates.indexOf(validOptions[vi]) === -1) {
-            candidates.push(validOptions[vi]);
-          }
-        }
-      }
-    }
-    for (var v2 = 0; v2 < validOptions.length; v2++) {
-      if (candidates.indexOf(validOptions[v2]) === -1) {
-        candidates.push(validOptions[v2]);
-      }
-    }
-  }
-
-  var standardTerms = ['Euromar', 'Bizzum Tarjeta Rest', 'Bizz', 'Nómina', 'Nomina', 'Sueldo', 'Salario', 'Ingreso', 'Ingresos', 'General'];
-  for (var st = 0; st < standardTerms.length; st++) {
-    if (candidates.indexOf(standardTerms[st]) === -1) {
-      candidates.push(standardTerms[st]);
-    }
-  }
-
-  // Intentar asignar los candidatos
-  for (var cIdx = 0; cIdx < candidates.length; cIdx++) {
-    var candidate = candidates[cIdx];
-    try {
-      cell.setValue(candidate);
-      return candidate;
-    } catch (eSet) {}
-  }
-
-  var defaultFallbackCat = (validOptions.length > 0 ? validOptions[0] : (preferredCat || 'Euromar'));
-
-  // Si la validación rechaza con excepción:
-  // 1. Intentar permitir datos no válidos (setAllowInvalid(true)) manteniendo el menú
-  try {
-    if (rule) {
-      var relaxedRule = rule.copy().setAllowInvalid(true).build();
-      cell.setDataValidation(relaxedRule);
-      cell.setValue(preferredCat || defaultFallbackCat);
-      return preferredCat || defaultFallbackCat;
-    }
-  } catch (eRelax) {}
-
-  // 2. Si no es posible relajarla, limpiar validación de esa celda
-  try {
-    cell.clearDataValidations();
-    cell.setValue(preferredCat || defaultFallbackCat);
-    return preferredCat || defaultFallbackCat;
-  } catch (eClear) {}
-
-  return '';
-}
-
-/**
- * Establece o actualiza los ingresos totales para el mes indicado.
- * Mantiene la integridad de las fórmulas del spreadsheet actualizando la
- * fila principal de ingresos (fila 13) y limpiando filas adicionales si fuera necesario.
- * Es completamente tolerante ante reglas de validación de datos en B13 y C13.
- */
-function setTotalIncome(ss, month, amount, optionalCategory) {
-  try {
-    var parsedAmt = parseFloat(String(amount).replace(',', '.'));
-    if (isNaN(parsedAmt) || parsedAmt < 0) {
-      return { error: 'Cantidad de ingresos inválida: ' + amount };
-    }
-
-    var ws = findSheet(ss, month);
-    if (!ws) {
-      return { error: 'No se encontró la hoja para el mes: ' + month };
-    }
-
-    var cols = findIncomeCols(ws);
-
-    // 1. Asignar categoría en Col B (cols.catCol) con total protección contra errores de validación de Google Sheets
-    try {
-      setSafeIncomeCategory(ws, 13, cols.catCol, optionalCategory || 'Euromar');
-    } catch (eCat) {
-      // Si la celda tuviese algún bloqueo, continuar para no impedir guardar el importe
-    }
-
-    // 2. Asignar el importe en Col C (cols.amtCol) de forma segura
-    try {
-      ws.getRange(13, cols.amtCol).setValue(parsedAmt);
-    } catch (amtErr) {
-      try {
-        ws.getRange(13, cols.amtCol).clearDataValidations();
-        ws.getRange(13, cols.amtCol).setValue(parsedAmt);
-      } catch (amtErr2) {
-        return { error: 'No se pudo escribir el importe en la celda: ' + amtErr2.message };
-      }
-    }
-
-    // 3. Limpiar ingresos secundarios antiguos en filas 14-35 en UNA SOLA LLAMADA por bloque (ultrarrápido)
-    try {
-      var lastRow = Math.min(ws.getLastRow(), 35);
-      if (lastRow >= 14) {
-        var clearCount = lastRow - 13;
-        ws.getRange(14, cols.catCol, clearCount, 2).clearContent();
-      }
-    } catch (clearErr) {}
-
-    // 4. Asegurar fórmula =SUM(C13:C993) / =SUMA(C13:C993) en C10 (cols.amtCol) si fue sobreescrita
-    try {
-      var cellC10 = ws.getRange(10, cols.amtCol);
-      var formulaC10 = String(cellC10.getFormula() || '');
-      if (!formulaC10 || (formulaC10.indexOf('SUM') === -1 && formulaC10.indexOf('SUMA') === -1)) {
-        try {
-          cellC10.setFormula('=SUM(C13:C993)');
-        } catch (e) {
-          try {
-            cellC10.setFormula('=SUMA(C13:C993)');
-          } catch (e2) {}
-        }
-      }
-    } catch (eFormula) {}
-
-    SpreadsheetApp.flush();
-
-    var updatedData = getMonthData(ss, ws.getName());
-    var sum = (updatedData && updatedData.summary && updatedData.summary.income > 0)
-      ? updatedData.summary
-      : getSummary(ss, ws.getName(), ws);
-
-    // Salvaguarda: garantizar que el resumen devuelva el ingreso recién asignado
-    if (!sum || sum.error || !sum.income || sum.income === 0) {
-      if (!sum || sum.error) sum = {};
-      sum.month = ws.getName();
-      sum.income = parsedAmt;
-      sum.totalExpenses = (sum.fixedExpenses || 0) + (sum.variableExpenses || 0);
-      sum.remainingMonth = parsedAmt - sum.totalExpenses - (sum.desiredSavings || 0);
-      sum.savings = sum.remainingMonth;
-    }
-
-    return {
-      success: true,
-      month: ws.getName(),
-      income: parsedAmt,
-      summary: sum,
-      expenses: (updatedData && updatedData.expenses) ? updatedData.expenses : [],
-      incomes: (updatedData && updatedData.incomes) ? updatedData.incomes : [],
-      lastRow: (updatedData && updatedData.lastRow) ? updatedData.lastRow : ws.getLastRow()
-    };
-  } catch (errGlobal) {
-    return { error: 'Error procesando ingresos: ' + errGlobal.toString() };
-  }
 }
 
 /* ================================================================
- *  GESTIÓN DE GASTOS FIJOS Y CASILLAS (CHECKBOXES)
+ *  CONSOLIDACIÓN ANUAL (PANEL DE CONTROL)
  * ================================================================ */
 
-/**
- * Convierte letra de columna (ej. 'A', 'F', 'G') a índice base 1.
- */
-function colLetterToIndex(letter) {
-  if (!letter) return 0;
-  var col = 0;
-  var upper = String(letter).toUpperCase();
-  for (var i = 0; i < upper.length; i++) {
-    col = col * 26 + (upper.charCodeAt(i) - 64);
-  }
-  return col;
-}
-
-/**
- * Nombres por defecto de categorías para filas 13 a 21 según la plantilla oficial.
- */
-var FIXED_DEFAULT_CATEGORIES = {
-  13: 'Alquiler',
-  14: 'Bono metro',
-  15: 'Gimnasio',
-  16: 'Disney',
-  17: 'Spotify',
-  18: 'Comida Base',
-  19: 'Comida Base',
-  20: 'Servicios',
-  21: 'Inversión'
-};
-
-/**
- * Importes por defecto para filas 13 a 21.
- * Se usan para restaurar las fórmulas =IF(G#; importe; 0) si la columna F fue sobreescrita por error.
- */
-var FIXED_DEFAULT_AMOUNTS = {
-  13: 470,
-  14: 10,
-  15: 24.99,
-  16: 6.99,
-  17: 3.5,
-  18: 41.62,
-  19: 57.36,
-  20: 36,
-  21: 0
-};
-
-/**
- * Asegura que la hoja de cálculo use la configuración regional de España (es_ES).
- * Esto garantiza que:
- *   - Los decimales se separen por coma (,)
- *   - Los separadores de argumentos en fórmulas de Excel y Sheets sean punto y coma (;)
- *   - Google Sheets muestre en la barra de fórmulas fx: =IF(G21; 190,89; 0)
- */
-function ensureSpanishLocale(ss) {
-  try {
-    if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
-    if (ss && ss.getSpreadsheetLocale) {
-      var currentLocale = ss.getSpreadsheetLocale();
-      if (currentLocale !== 'es_ES' && currentLocale !== 'es_es') {
-        ss.setSpreadsheetLocale('es_ES');
-      }
-    }
-  } catch (e) {
-    Logger.log('Aviso al configurar locale regional: ' + e);
-  }
-}
-
-/**
- * Añade un menú personalizado directamente dentro de Google Sheets
- * para que puedas configurar la región o reparar fórmulas con 1 solo clic.
- */
-function onOpen() {
-  try {
-    SpreadsheetApp.getUi()
-      .createMenu('Control Gastos')
-      .addItem('Configurar región España (decimales con coma , y fórmulas con ;)', 'menuSetLocaleSpain')
-      .addItem('Reparar todas las fórmulas de Gastos Fijos', 'menuRepairAllFixedExpenses')
-      .addToUi();
-  } catch (e) {}
-}
-
-function menuSetLocaleSpain() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  ensureSpanishLocale(ss);
-  SpreadsheetApp.flush();
-  SpreadsheetApp.getUi().alert(
-    'Configuración Regional España Aplicada',
-    'La hoja ha sido configurada a España (es_ES).\n\n' +
-    '• Separador de decimales: coma (,)\n' +
-    '• Separador de fórmulas: punto y coma (;)\n\n' +
-    'Las fórmulas de Google Sheets en la barra "fx" ahora muestran ; y , automáticamente.',
-    SpreadsheetApp.getUi().ButtonSet.OK
-  );
-}
-
-function menuRepairAllFixedExpenses() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  ensureSpanishLocale(ss);
-  var months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-  var totalRestored = 0;
-  for (var i = 0; i < months.length; i++) {
-    var rep = repairFixedExpenseFormulas(ss, months[i], true);
-    if (rep && rep.restored) totalRestored += rep.restored;
-  }
-  SpreadsheetApp.flush();
-  SpreadsheetApp.getUi().alert(
-    'Fórmulas Reparadas',
-    'Se han actualizado las fórmulas de gastos fijos para todos los meses.\nTotal celdas actualizadas: ' + totalRestored,
-    SpreadsheetApp.getUi().ButtonSet.OK
-  );
-}
-
-/**
- * Formatea un importe numérico para su inserción en fórmulas de Excel y Google Sheets
- * en configuración regional española/europea:
- *   - Separador de argumentos: punto y coma (;)
- *   - Separador de decimales: coma (,) en lugar de punto (.)
- * Ejemplos:
- *   470 -> "470"
- *   24.99 -> "24,99"
- *   3.5 -> "3,5"
- *   "41,62" -> "41,62"
- */
-function formatNumberForFormula(amount) {
-  if (amount === undefined || amount === null || amount === '') return '0';
-  var num = (typeof amount === 'number') ? amount : parseFloat(String(amount).replace(',', '.'));
-  if (isNaN(num)) return '0';
-  var rounded = Math.round(num * 100) / 100;
-  return String(rounded).replace('.', ',');
-}
-
-/**
- * Asigna la fórmula condicional del gasto fijo a una celda:
- * Formato primario español/europeo: =IF(G#; importe; 0)
- * con separador de argumentos ";" y decimales con ",".
- * Ejemplo: =IF(G15; 24,99; 0)
- * Incluye fallback automático a =SI(...) y a formato estándar US por máxima compatibilidad.
- */
-function setFixedExpenseCellFormula(cell, checkRef, amount) {
-  var formattedAmount = formatNumberForFormula(amount);
-  var usNum = (typeof amount === 'number') ? amount : (parseFloat(String(amount).replace(',', '.')) || 0);
-
-  // Asegurar locale regional de España para que Sheets interprete y muestre ';' y ','
-  try {
-    var ss = cell.getSheet().getParent();
-    ensureSpanishLocale(ss);
-  } catch (locErr) {}
-
-  var formulasToTry = [
-    '=IF(' + checkRef + '; ' + formattedAmount + '; 0)',
-    '=SI(' + checkRef + '; ' + formattedAmount + '; 0)',
-    '=IF(' + checkRef + '; ' + usNum + '; 0)',
-    '=SI(' + checkRef + '; ' + usNum + '; 0)',
-    '=IF(' + checkRef + ', ' + usNum + ', 0)'
-  ];
-
-  for (var i = 0; i < formulasToTry.length; i++) {
-    try {
-      cell.setFormula(formulasToTry[i]);
-      return;
-    } catch (err) {}
-  }
-}
-
-/**
- * Localiza con precisión matemática las columnas de Gastos Fijos en una hoja de mes.
- * Estructura en Google Sheets del usuario:
- *   - Col E (5): Categoría / Concepto (Alquiler, Bono metro, etc.)
- *   - Col F (6): Importe con fórmula =IF(G13; 470; 0) o =SI(G13; "470"; 0)
- *   - Col G (7): Casilla de verificación (Checkbox / VERDADERO / FALSO)
- */
-function findFixedExpenseCols(ws) {
-  var catCol = 5;       // Siempre Col E para Gastos Fijos
-  var amtCol = 6;       // Col F para Importe / Fórmula =IF(G#; 470; 0)
-  var checkCol = 7;     // Col G para Casilla de verificación (Checkbox)
-  var hasCheckbox = true;
-
-  try {
-    var lastCol = ws.getLastColumn();
-    // En hojas legacy sin casillas (ej. Enero/Febrero si Col G no existe):
-    if (lastCol < 7) {
-      hasCheckbox = false;
-      checkCol = null;
-      amtCol = 6;
-    } else {
-      var h12_f = normalizeStr(ws.getRange(12, 6).getValue() || '');
-      var h12_g = normalizeStr(ws.getRange(12, 7).getValue() || '');
-      // Si Col F es cantidad y Col G no tiene contenido ni casillas
-      if (h12_f === 'cantidad' && h12_g === '') {
-        var sampleG = ws.getRange(13, 7).getValue();
-        if (sampleG !== true && sampleG !== false) {
-          hasCheckbox = false;
-          checkCol = null;
-          amtCol = 6;
-        }
-      }
-    }
-  } catch (err) {
-    catCol = 5;
-    amtCol = 6;
-    checkCol = 7;
-    hasCheckbox = true;
-  }
-
-  return {
-    catCol: catCol,
-    amtCol: amtCol,
-    checkCol: checkCol,
-    hasCheckbox: hasCheckbox
-  };
-}
-
-/**
- * Comprueba de forma infalible si una casilla está marcada basándose en el valor de la casilla (Col G).
- * Acepta booleanos de Google Sheets (true/false), valores numéricos de Excel (1/0),
- * texto en español o inglés ('VERDADERO', 'TRUE', 'FALSO', 'FALSE', etc.) y celdas vacías.
- */
-function isCheckboxChecked(rawVal, displayVal) {
-  // 1. Valores booleanos estrictos
-  if (rawVal === true) return true;
-  if (rawVal === false) return false;
-
-  // 2. Valores numéricos de Excel (1 = Marcado, 0 = Desmarcado)
-  if (rawVal === 1 || rawVal === '1') return true;
-  if (rawVal === 0 || rawVal === '0') return false;
-
-  // 3. Celdas vacías o nulas son desmarcadas
-  if (rawVal === null || rawVal === undefined || rawVal === '') return false;
-
-  // 4. Comprobación de texto normalizado
-  var s = String(rawVal).trim().toLowerCase();
-  var ds = String(displayVal || '').trim().toLowerCase();
-
-  var truthy = ['true', 'verdadero', 'v', 'si', 'sí', 'yes', 'y', 'checked', 'ok', 'x', '✓', '✔'];
-  if (truthy.indexOf(s) !== -1 || truthy.indexOf(ds) !== -1) {
-    return true;
-  }
-
-  var falsy = ['false', 'falso', 'f', 'no', 'unchecked', '', 'null', 'undefined'];
-  if (falsy.indexOf(s) !== -1 || falsy.indexOf(ds) !== -1) {
-    return false;
-  }
-
-  return false;
-}
-
-/**
- * Devuelve la lista completa de gastos fijos de un mes con el estado de su casilla y su importe.
- * Muestra TODOS los gastos fijos (filas 13 a 21), tanto marcados como desmarcados.
- * Si detecta que la Columna F fue dañada con texto "TRUE" o booleano, restaura automáticamente
- * la fórmula =IF(G#; importe; 0) en la Columna F y devuelve el importe correcto.
- */
-function getFixedExpenses(ss, month, existingWs) {
-  var ws = existingWs || findSheet(ss, month);
-  if (!ws) return { error: 'Mes no encontrado: ' + month };
-
-  var cols = findFixedExpenseCols(ws);
-  var maxScanRow = Math.min(ws.getLastRow(), 35);
-  var fixedExpenses = [];
-  var totalActive = 0;
-  var needsFlush = false;
-
-  if (maxScanRow >= 13) {
-    var numRows = maxScanRow - 12;
-    var catRange = ws.getRange(13, cols.catCol, numRows, 1).getValues();
-    var amtRange = ws.getRange(13, cols.amtCol, numRows, 1).getValues();
-    var formulas = ws.getRange(13, cols.amtCol, numRows, 1).getFormulas();
-    var checkRange = (cols.hasCheckbox && cols.checkCol) ? ws.getRange(13, cols.checkCol, numRows, 1).getValues() : [];
-    var checkDisplay = (cols.hasCheckbox && cols.checkCol) ? ws.getRange(13, cols.checkCol, numRows, 1).getDisplayValues() : [];
-
-    for (var i = 0; i < catRange.length; i++) {
-      var rowNum = i + 13;
-      var cat = String(catRange[i][0] || '').trim();
-
-      // Si la fila no tiene nombre de categoría en Col E, comprobamos si es fila estándar (13-21)
-      if (!cat) {
-        if (FIXED_DEFAULT_CATEGORIES[rowNum]) {
-          cat = FIXED_DEFAULT_CATEGORIES[rowNum];
-        } else {
-          continue;
-        }
-      }
-
-      // Protección contra nombres numéricos (ej. si Col E se sobreescribió por error con "470")
-      if (/^[0-9]+([.,][0-9]+)?$/.test(cat) && FIXED_DEFAULT_CATEGORIES[rowNum]) {
-        cat = FIXED_DEFAULT_CATEGORIES[rowNum];
-      }
-
-      var formula = (formulas.length > i && formulas[i] && formulas[i][0]) ? String(formulas[i][0]) : '';
-      var cellVal = amtRange[i][0];
-      var numCellVal = (typeof cellVal === 'number') ? cellVal : (parseFloat(String(cellVal).replace(',', '.')) || 0);
-      var baseAmount = 0;
-
-      // 1. Extraer el importe base de la fórmula tipo =IF(G13; 470; 0) o =SI(G13; "470"; 0)
-      if (formula) {
-        var match = formula.match(/(?:IF|SI)\s*\(\s*[^,;]+[,;]\s*["']?([0-9]+(?:[.,][0-9]+)?)["']?/i);
-        if (match && match[1]) {
-          baseAmount = parseFloat(match[1].replace(',', '.'));
-        } else {
-          var refMatch = formula.match(/(?:IF|SI)\s*\(\s*[^,;]+[,;]\s*([A-Za-z]+(\d+))/i);
-          if (refMatch && refMatch[1]) {
-            try {
-              var refVal = ws.getRange(refMatch[1]).getValue();
-              var pVal = parseFloat(String(refVal).replace(',', '.'));
-              if (!isNaN(pVal) && pVal > 0) baseAmount = pVal;
-            } catch (e) {}
-          }
-        }
-      }
-
-      // 2. Si la celda en Col F contenía un booleano (TRUE/FALSE) o texto "TRUE" por el bug anterior:
-      var isCorruptedBool = (typeof cellVal === 'boolean') ||
-        (String(cellVal).trim().toUpperCase() === 'TRUE') ||
-        (String(cellVal).trim().toUpperCase() === 'VERDADERO') ||
-        (String(cellVal).trim().toUpperCase() === 'FALSE') ||
-        (String(cellVal).trim().toUpperCase() === 'FALSO');
-
-      if ((!baseAmount || isNaN(baseAmount) || baseAmount <= 0 || isCorruptedBool) && FIXED_DEFAULT_AMOUNTS[rowNum]) {
-        baseAmount = FIXED_DEFAULT_AMOUNTS[rowNum];
-      } else if ((!baseAmount || isNaN(baseAmount)) && cellVal !== '') {
-        baseAmount = numCellVal;
-      }
-
-      // Si la celda en Col F estaba corrupta y tenemos casilla en Col G, auto-reparamos la fórmula en Col F
-      if (cols.hasCheckbox && cols.checkCol && (isCorruptedBool || (!formula && baseAmount > 0))) {
-        try {
-          setFixedExpenseCellFormula(ws.getRange(rowNum, cols.amtCol), 'G' + rowNum, baseAmount);
-          needsFlush = true;
-        } catch (repairErr) {}
-      }
-
-      // 3. Determinar si está activa según la casilla en Col G
-      var active = false;
-
-      if (cols.hasCheckbox && cols.checkCol && checkRange.length > i) {
-        var rawCheck = checkRange[i][0];
-        var dispCheck = (checkDisplay.length > i) ? checkDisplay[i][0] : '';
-        active = isCheckboxChecked(rawCheck, dispCheck);
-      } else {
-        // En hojas legacy sin casilla (Enero/Febrero), activo si tiene importe
-        active = numCellVal > 0 || baseAmount > 0;
-      }
-
-      if (active) {
-        totalActive += baseAmount;
-      }
-
-      fixedExpenses.push({
-        row: rowNum,
-        category: cat,
-        amount: baseAmount,
-        active: active,
-        hasCheckbox: cols.hasCheckbox
-      });
-    }
-
-    if (needsFlush) {
-      SpreadsheetApp.flush();
-    }
-  }
-
-  return {
-    month: ws.getName(),
-    fixedExpenses: fixedExpenses,
-    totalActive: totalActive,
-    hasCheckbox: cols.hasCheckbox
-  };
-}
-
-/**
- * Modifica el estado de la casilla de un gasto fijo en Columna G (VERDADERO / FALSO)
- * y asegura que la Columna F conserve su fórmula =IF(G#; importe; 0).
- */
-function setFixedExpenseStatus(ss, month, row, active) {
-  var ws = findSheet(ss, month);
-  if (!ws) return { error: 'Mes no encontrado: ' + month };
-
-  var cols = findFixedExpenseCols(ws);
-  var targetRow = parseInt(row, 10);
-  if (isNaN(targetRow) || targetRow < 13 || targetRow > ws.getMaxRows()) {
-    return { error: 'Fila de gasto fijo inválida: ' + row };
-  }
-
-  var isActive = (active === true || active === 'true' || active === 1 || active === '1');
-
-  if (cols.hasCheckbox && cols.checkCol) {
-    // 1. Modificar la casilla en Col G (VERDADERO / FALSO)
-    ws.getRange(targetRow, cols.checkCol).setValue(isActive);
-
-    // 2. Comprobar y asegurar que la fórmula en Col F esté activa =IF(G#; importe; 0)
-    var amtCell = ws.getRange(targetRow, cols.amtCol);
-    var curFormula = String(amtCell.getFormula() || '');
-    if (!curFormula || (curFormula.indexOf('IF') === -1 && curFormula.indexOf('SI') === -1)) {
-      var checkRef = ws.getRange(targetRow, cols.checkCol).getA1Notation(); // G#
-      var curVal = parseFloat(String(amtCell.getValue()).replace(',', '.')) || 0;
-      if (curVal <= 0 && FIXED_DEFAULT_AMOUNTS[targetRow]) {
-        curVal = FIXED_DEFAULT_AMOUNTS[targetRow];
-      }
-      if (curVal > 0) {
-        setFixedExpenseCellFormula(amtCell, checkRef, curVal);
-      }
-    }
-  } else {
-    // Legacy sin casilla (ej. Enero/Febrero)
-    if (!isActive) {
-      ws.getRange(targetRow, cols.amtCol).setValue(0);
-    }
-  }
-
-  SpreadsheetApp.flush();
-
-  var updatedFixed = getFixedExpenses(ss, ws.getName());
-  var updatedSummary = getSummary(ss, ws.getName());
-
-  return {
-    success: true,
-    month: ws.getName(),
-    row: targetRow,
-    active: isActive,
-    summary: updatedSummary,
-    fixedExpenses: updatedFixed.fixedExpenses,
-    totalActive: updatedFixed.totalActive
-  };
-}
-
-/**
- * Actualiza el importe numérico en la fórmula de la Columna F (=IF(G#; importe; 0))
- * y opcionalmente el nombre de la categoría en la Columna E.
- */
-function setFixedExpenseAmount(ss, month, row, newAmount, newCategory) {
-  var ws = findSheet(ss, month);
-  if (!ws) return { error: 'Mes no encontrado: ' + month };
-
-  var cols = findFixedExpenseCols(ws);
-  var targetRow = parseInt(row, 10);
-  if (isNaN(targetRow) || targetRow < 13 || targetRow > ws.getMaxRows()) {
-    return { error: 'Fila de gasto fijo inválida: ' + row };
-  }
-
-  var numAmount = parseFloat(String(newAmount).replace(',', '.'));
-  if (isNaN(numAmount) || numAmount < 0) {
-    return { error: 'Importe numérico inválido: ' + newAmount };
-  }
-
-  // 1. Si se proporciona nuevo nombre de categoría, actualizarlo en Col E
-  if (newCategory && String(newCategory).trim()) {
-    try {
-      ws.getRange(targetRow, cols.catCol).setValue(String(newCategory).trim());
-    } catch (eCat) {
-      try {
-        ws.getRange(targetRow, cols.catCol).clearDataValidations();
-        ws.getRange(targetRow, cols.catCol).setValue(String(newCategory).trim());
-      } catch (eCat2) {}
-    }
-  }
-
-  // 2. Actualizar el importe en Col F con fórmula =IF(G#; importe; 0) (separador ';' y decimales ',')
-  var amtCell = ws.getRange(targetRow, cols.amtCol);
-  if (cols.hasCheckbox && cols.checkCol) {
-    var checkRef = ws.getRange(targetRow, cols.checkCol).getA1Notation(); // G#
-    setFixedExpenseCellFormula(amtCell, checkRef, numAmount);
-  } else {
-    try {
-      amtCell.setValue(numAmount);
-    } catch (eAmt) {
-      try {
-        amtCell.clearDataValidations();
-        amtCell.setValue(numAmount);
-      } catch (eAmt2) {}
-    }
-  }
-
-  SpreadsheetApp.flush();
-
-  var updatedFixed = getFixedExpenses(ss, ws.getName());
-  var updatedSummary = getSummary(ss, ws.getName());
-
-  return {
-    success: true,
-    status: 'ok',
-    month: ws.getName(),
-    row: targetRow,
-    newAmount: numAmount,
-    summary: updatedSummary,
-    fixedExpenses: updatedFixed.fixedExpenses,
-    totalActive: updatedFixed.totalActive
-  };
-}
-
-/**
- * Actualiza múltiples casillas de gastos fijos en Columna G en una sola llamada,
- * y asegura que Columna F tenga sus fórmulas =IF(G#; importe; 0).
- */
-function setFixedExpensesBatch(ss, month, updates) {
-  var ws = findSheet(ss, month);
-  if (!ws) return { error: 'Mes no encontrado: ' + month };
-
-  var cols = findFixedExpenseCols(ws);
-  if (!Array.isArray(updates) || updates.length === 0) {
-    return { error: 'Lista de actualizaciones vacía' };
-  }
-
-  for (var i = 0; i < updates.length; i++) {
-    var u = updates[i];
-    var row = parseInt(u.row, 10);
-    var active = (u.active === true || u.active === 'true' || u.active === 1 || u.active === '1');
-    if (!isNaN(row) && row >= 13 && row <= ws.getMaxRows()) {
-      if (cols.hasCheckbox && cols.checkCol) {
-        // Col G (7)
-        ws.getRange(row, cols.checkCol).setValue(active);
-
-        // Asegurar que Col F (6) tiene la fórmula =IF(G#; importe; 0)
-        var amtCell = ws.getRange(row, cols.amtCol);
-        var curFormula = String(amtCell.getFormula() || '');
-        if (!curFormula || (curFormula.indexOf('IF') === -1 && curFormula.indexOf('SI') === -1)) {
-          var checkRef = ws.getRange(row, cols.checkCol).getA1Notation();
-          var curAmt = u.amount || FIXED_DEFAULT_AMOUNTS[row] || 0;
-          if (curAmt > 0) {
-            setFixedExpenseCellFormula(amtCell, checkRef, curAmt);
-          }
-        }
-      } else {
-        if (!active) {
-          ws.getRange(row, cols.amtCol).setValue(0);
-        }
-      }
-    }
-  }
-
-  SpreadsheetApp.flush();
-
-  var updatedFixed = getFixedExpenses(ss, ws.getName());
-  var updatedSummary = getSummary(ss, ws.getName());
-
-  return {
-    success: true,
-    month: ws.getName(),
-    summary: updatedSummary,
-    fixedExpenses: updatedFixed.fixedExpenses,
-    totalActive: updatedFixed.totalActive
-  };
-}
-
-/**
- * Restaura todas las fórmulas de Columna F =IF(G#; importe; 0) para filas 13 a 21.
- * Repara instantáneamente cualquier celda que haya quedado con "TRUE", números planos
- * o fórmulas con sintaxis incorrecta (, en vez de ; o punto decimal).
- */
-function repairFixedExpenseFormulas(ss, month, forceAll) {
-  ensureSpanishLocale(ss);
-  var ws = findSheet(ss, month);
-  if (!ws) return { error: 'Mes no encontrado: ' + month };
-
-  var cols = findFixedExpenseCols(ws);
-  var restored = 0;
-
-  for (var row = 13; row <= 21; row++) {
-    var checkRef = 'G' + row;
-    var defaultAmt = FIXED_DEFAULT_AMOUNTS[row] || 0;
-    var amtCell = ws.getRange(row, cols.amtCol); // Col F (6)
-    var curFormula = String(amtCell.getFormula() || '');
-
-    var needsUpdate = forceAll || !curFormula || (curFormula.indexOf('IF') === -1 && curFormula.indexOf('SI') === -1);
-    // Si la fórmula actual contiene punto decimal o coma como separador de argumentos (sin punto y coma)
-    if (!needsUpdate && (curFormula.indexOf('.') !== -1 || (curFormula.indexOf(',') !== -1 && curFormula.indexOf(';') === -1))) {
-      needsUpdate = true;
-    }
-
-    if (needsUpdate) {
-      var curVal = parseFloat(String(amtCell.getValue()).replace(',', '.')) || 0;
-      var formulaMatch = curFormula.match(/(?:IF|SI)\s*\(\s*[^,;]+[,;]\s*["']?([0-9]+(?:[.,][0-9]+)?)["']?/i);
-      var formulaAmt = formulaMatch ? parseFloat(formulaMatch[1].replace(',', '.')) : 0;
-      var amtToUse = curVal > 0 ? curVal : (formulaAmt > 0 ? formulaAmt : defaultAmt);
-      if (amtToUse > 0) {
-        setFixedExpenseCellFormula(amtCell, checkRef, amtToUse);
-        restored++;
-      }
-    }
-  }
-
-  SpreadsheetApp.flush();
-
-  var updatedFixed = getFixedExpenses(ss, ws.getName());
-  var updatedSummary = getSummary(ss, ws.getName());
-
-  return {
-    success: true,
-    month: ws.getName(),
-    restored: restored,
-    summary: updatedSummary,
-    fixedExpenses: updatedFixed.fixedExpenses,
-    totalActive: updatedFixed.totalActive
-  };
-}
-
-/**
- * Obtiene los datos anuales consolidados de la pestaña 'Panel de control'.
- * Extrae ingresos, gastos totales, ahorro, gastos fijos y gastos variables de cada mes.
- * Si la pestaña no está disponible, extrae la información directamente de las hojas mensuales.
- */
 function getControlPanelData(ss) {
   var months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
   var shortMonths = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
-  // Buscar la hoja de 'Data gráficos' o 'Panel de control'
   var wsPanel = null;
   var wsDataGraficos = null;
   var sheets = ss.getSheets();
@@ -2086,39 +1384,23 @@ function getControlPanelData(ss) {
   var totalFixed = 0;
   var totalVariable = 0;
 
-  if (wsDataGraficos || wsPanel) {
-    // Si existe 'Data gráficos', leer filas 4 a 15 (Columnas B a F)
-    // B: Mes, C: Ingresos, D: Gastos Fijos, E: Gastos Variables, F: Gastos Totales
-    var graficosMatrix = null;
-    if (wsDataGraficos) {
-      try {
-        graficosMatrix = wsDataGraficos.getRange(4, 2, 12, 5).getValues();
-      } catch (e) {}
-    }
+  var graficosMatrix = null;
+  if (wsDataGraficos) {
+    try {
+      graficosMatrix = wsDataGraficos.getRange(4, 2, 12, 5).getValues();
+    } catch (e) {}
+  }
 
-    // Matriz de 'Panel de control'
-    var panelMatrix = null;
-    var colMap = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26];
-    if (wsPanel) {
-      try {
-        panelMatrix = wsPanel.getRange(5, 1, 11, 28).getValues();
-      } catch (e) {}
-    }
-
-    for (var m = 0; m < 12; m++) {
+  for (var m = 0; m < 12; m++) {
     var mName = months[m];
     var mShort = shortMonths[m];
-    var colIdx = colMap[m] - 1; // 0-indexed para Panel de control
 
     var income = 0;
     var expenses = 0;
     var fixed = 0;
     var variable = 0;
     var savings = 0;
-    var pctFixed = 0;
-    var pctVar = 0;
 
-    // 1. Intentar leer de 'Data gráficos' si tiene datos para esta fila
     if (graficosMatrix && graficosMatrix[m]) {
       var rowG = graficosMatrix[m];
       var gInc = parseFloat(String(rowG[1]).replace(',', '.')) || 0;
@@ -2134,63 +1416,19 @@ function getControlPanelData(ss) {
       }
     }
 
-    // 2. Si no hay datos o faltan, leer de 'Panel de control'
-    if (panelMatrix) {
-      var rawIncome = panelMatrix[2] ? panelMatrix[2][colIdx] : 0;
-      var rawExpenses = panelMatrix[3] ? panelMatrix[3][colIdx] : 0;
-      var rawSavings = panelMatrix[5] ? panelMatrix[5][colIdx] : 0;
-      var rawPctFixed = panelMatrix[8] ? panelMatrix[8][colIdx] : 0;
-      var rawPctVar = panelMatrix[9] ? panelMatrix[9][colIdx] : 0;
-
-      var pIncome = parseFloat(String(rawIncome).replace(',', '.')) || 0;
-      var pExpenses = parseFloat(String(rawExpenses).replace(',', '.')) || 0;
-      var pSavings = parseFloat(String(rawSavings).replace(',', '.')) || 0;
-      var pPctFixed = parseFloat(String(rawPctFixed).replace(',', '.')) || 0;
-      var pPctVar = parseFloat(String(rawPctVar).replace(',', '.')) || 0;
-
-      if (income === 0 && pIncome > 0) income = pIncome;
-      if (expenses === 0 && pExpenses > 0) expenses = pExpenses;
-      if (savings === 0 && pSavings > 0) savings = pSavings;
-      if (pctFixed === 0 && pPctFixed > 0) pctFixed = pPctFixed;
-      if (pctVar === 0 && pPctVar > 0) pctVar = pPctVar;
-
-      if (fixed === 0 && pctFixed > 0 && income > 0) {
-        fixed = Math.round(pctFixed * income * 100) / 100;
-      }
-      if (variable === 0 && pctVar > 0 && income > 0) {
-        variable = Math.round(pctVar * income * 100) / 100;
-      }
-    }
-
-    // 3. Si sigue sin datos de ingresos/gastos O sin desglose fijo/variable, consultar hoja del mes
     if (income === 0 && expenses === 0 && fixed === 0 && variable === 0) {
       try {
-        var monthSum = getSummary(ss, mName);
-        if (monthSum && !monthSum.error) {
-          if (monthSum.income) income = monthSum.income;
-          if (monthSum.fixedExpenses) fixed = monthSum.fixedExpenses;
-          if (monthSum.variableExpenses) variable = monthSum.variableExpenses;
-          if (monthSum.totalExpenses) expenses = monthSum.totalExpenses;
-          if (monthSum.savings) savings = monthSum.savings;
+        var mSum = getSummary(ss, mName);
+        if (mSum && !mSum.error) {
+          income = mSum.income || 0;
+          fixed = mSum.fixedExpenses || 0;
+          variable = mSum.variableExpenses || 0;
+          expenses = mSum.totalExpenses || (fixed + variable);
+          savings = mSum.savings || (income - expenses);
         }
       } catch (e) {}
-    } else if (fixed === 0 && variable === 0 && expenses > 0) {
-      try {
-        var monthSum2 = getSummary(ss, mName);
-        if (monthSum2 && !monthSum2.error) {
-          fixed = monthSum2.fixedExpenses || 0;
-          variable = monthSum2.variableExpenses || 0;
-        }
-      } catch (e) {}
-
-      if (fixed === 0 && variable === 0) {
-        variable = expenses;
-      }
     }
 
-    if (expenses === 0 && (fixed > 0 || variable > 0)) {
-      expenses = fixed + variable;
-    }
     if (savings === 0 && income > 0) {
       savings = income > expenses ? income - expenses : 0;
     }
@@ -2220,42 +1458,6 @@ function getControlPanelData(ss) {
       totalVariable += variable;
     }
   }
-  } else {
-    // Si la hoja 'Panel de control' no existe, escanear hojas de meses
-    for (var i = 0; i < 12; i++) {
-      var nameI = months[i];
-      var sumI = getSummary(ss, nameI);
-      var inc = (sumI && !sumI.error) ? (sumI.income || 0) : 0;
-      var fix = (sumI && !sumI.error) ? (sumI.fixedExpenses || 0) : 0;
-      var vari = (sumI && !sumI.error) ? (sumI.variableExpenses || 0) : 0;
-      var exp = fix + vari;
-      var sav = (sumI && !sumI.error) ? (sumI.savings || (inc - exp)) : 0;
-      var hasD = inc > 0 || exp > 0;
-
-      monthlyData.push({
-        month: nameI,
-        shortMonth: shortMonths[i],
-        monthIndex: i,
-        income: Math.round(inc * 100) / 100,
-        expenses: Math.round(exp * 100) / 100,
-        fixedExpenses: Math.round(fix * 100) / 100,
-        variableExpenses: Math.round(vari * 100) / 100,
-        savings: Math.round(sav * 100) / 100,
-        netBalance: Math.round((inc - exp) * 100) / 100,
-        pctFixed: inc > 0 ? fix / inc : 0,
-        pctVar: inc > 0 ? vari / inc : 0,
-        hasData: hasD
-      });
-
-      if (hasD) {
-        totalIncome += inc;
-        totalExpenses += exp;
-        totalSavings += sav;
-        totalFixed += fix;
-        totalVariable += vari;
-      }
-    }
-  }
 
   var activeMonths = monthlyData.filter(function(d) { return d.hasData; });
   var count = activeMonths.length || 1;
@@ -2278,4 +1480,125 @@ function getControlPanelData(ss) {
   };
 }
 
+/* ================================================================
+ *  SINCRONIZACIÓN EN LOTE (PUSH BATCH CHANGES)
+ * ================================================================ */
 
+/**
+ * Procesa un paquete completo de tareas pendientes en 1 sola llamada rápida.
+ * Ejecuta cada mutación, hace un único flush y devuelve los datos frescos de los meses afectados.
+ */
+function pushBatchChanges(ss, tasks) {
+  if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
+    return { success: true, processed: 0, message: 'No hay cambios para subir' };
+  }
+
+  var monthsAffected = {};
+  var errors = [];
+  var processed = 0;
+
+  for (var i = 0; i < tasks.length; i++) {
+    var t = tasks[i] || {};
+    var action = t.action;
+    var month = t.month;
+    var payload = t.payload || t;
+    if (month) monthsAffected[month] = true;
+
+    try {
+      if (action === 'addExpense') {
+        addExpense(
+          ss,
+          month,
+          payload.category,
+          parseFloat(String(payload.amount).replace(',', '.'))
+        );
+        processed++;
+      } else if (action === 'updateExpense') {
+        updateExpense(
+          ss,
+          month,
+          parseInt(payload.row, 10),
+          payload.oldCategory,
+          parseFloat(String(payload.oldAmount).replace(',', '.')),
+          payload.newCategory,
+          parseFloat(String(payload.newAmount).replace(',', '.'))
+        );
+        processed++;
+      } else if (action === 'deleteExpense') {
+        deleteExpense(
+          ss,
+          month,
+          parseInt(payload.row, 10),
+          payload.category,
+          parseFloat(String(payload.amount).replace(',', '.'))
+        );
+        processed++;
+      } else if (action === 'setFixedExpenseStatus' || action === 'toggleFixedExpense') {
+        setFixedExpenseStatus(
+          ss,
+          month,
+          parseInt(payload.row, 10),
+          payload.active === true || payload.active === 'true' || payload.active === 1 || payload.active === '1'
+        );
+        processed++;
+      } else if (action === 'setFixedExpenseAmount' || action === 'updateFixedExpenseAmount') {
+        setFixedExpenseAmount(
+          ss,
+          month,
+          parseInt(payload.row, 10),
+          parseFloat(String(payload.amount || payload.newAmount).replace(',', '.')),
+          payload.category || payload.newCategory
+        );
+        processed++;
+      } else if (action === 'setFixedExpensesBatch') {
+        setFixedExpensesBatch(ss, month, payload.updates || []);
+        processed++;
+      } else if (action === 'setTotalIncome') {
+        setTotalIncome(
+          ss,
+          month,
+          parseFloat(String(payload.amount).replace(',', '.')),
+          payload.category
+        );
+        processed++;
+      } else if (action === 'setSavingsGoal') {
+        setSavingsGoal(
+          ss,
+          month,
+          parseFloat(String(payload.amount).replace(',', '.'))
+        );
+        processed++;
+      } else if (action === 'addIncome') {
+        addIncome(
+          ss,
+          month,
+          payload.category,
+          parseFloat(String(payload.amount).replace(',', '.'))
+        );
+        processed++;
+      }
+    } catch (err) {
+      errors.push({ taskIndex: i, action: action, error: err.toString() });
+    }
+  }
+
+  SpreadsheetApp.flush();
+
+  // Devolver el estado fresco de todos los meses involucrados en el Push
+  var monthsData = {};
+  for (var m in monthsAffected) {
+    if (monthsAffected.hasOwnProperty(m)) {
+      try {
+        monthsData[m] = getMonthData(ss, m);
+      } catch (eM) {}
+    }
+  }
+
+  return {
+    success: errors.length === 0,
+    processed: processed,
+    total: tasks.length,
+    errors: errors,
+    monthsData: monthsData
+  };
+}

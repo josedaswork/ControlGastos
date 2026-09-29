@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Lock, X, Check, CheckSquare, Square, RefreshCw, AlertCircle, Pencil, Wrench } from 'lucide-react'
+import { Lock, X, Check, CheckSquare, Square, RefreshCw, AlertCircle, Pencil, Wrench, Download } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { Button } from '@/components/ui/button'
@@ -8,24 +8,44 @@ import { fmt } from '@/lib/utils'
 import {
   getFixedExpenses,
   getCachedFixedExpenses,
-  setFixedExpenseStatus,
-  setFixedExpensesBatch,
-  setFixedExpenseAmount,
+  stageSetFixedExpenseStatus,
+  stageSetFixedExpenseAmount,
   repairFixedExpenseFormulas,
   sanitizeAndMergeFixedExpenses,
   FIXED_DEFAULT_CATEGORIES,
+  getPushQueue,
+  subscribePushQueue,
 } from '@/lib/sheetsApi'
 import { toast } from 'sonner'
 
 export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSummaryUpdate, onClose }) {
-  const [items, setItems] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [isUsingCache, setIsUsingCache] = useState(false)
+  // Inicialización síncrona inmediata desde almacenamiento local (0ms de retraso)
+  const [items, setItems] = useState(() => {
+    const cached = getCachedFixedExpenses(month)
+    if (cached?.fixedExpenses && cached.fixedExpenses.length > 0) {
+      return sanitizeAndMergeFixedExpenses([], cached.fixedExpenses)
+    }
+    return sanitizeAndMergeFixedExpenses([], [])
+  })
+  const [loading, setLoading] = useState(false)
+  const [isUsingCache, setIsUsingCache] = useState(true)
   const [backgroundSyncing, setBackgroundSyncing] = useState(false)
   const [syncingRow, setSyncingRow] = useState(null)
   const [batchSyncing, setBatchSyncing] = useState(false)
   const [error, setError] = useState(null)
   const [repairing, setRepairing] = useState(false)
+
+  // Conjunto de filas con cambios pendientes de Push para este mes
+  const [pendingRowTasks, setPendingRowTasks] = useState(() => {
+    const q = getPushQueue()
+    const set = new Set()
+    q.forEach((t) => {
+      if (t.month === month && (t.action === 'setFixedExpenseStatus' || t.action === 'setFixedExpenseAmount')) {
+        set.add(t.payload?.row)
+      }
+    })
+    return set
+  })
 
   // Estado para edición del importe
   const [editingItem, setEditingItem] = useState(null)
@@ -33,71 +53,65 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
   const [editCategory, setEditCategory] = useState('')
   const [savingAmount, setSavingAmount] = useState(false)
 
-  // Cargar datos en caché primero, luego consultar API
+  // Cargar datos locales de inmediato al cambiar de mes
   useEffect(() => {
-    let isMounted = true
     const cached = getCachedFixedExpenses(month)
-    const hasCache = !!(cached?.fixedExpenses && cached.fixedExpenses.length > 0)
-
-    if (hasCache) {
+    if (cached?.fixedExpenses && cached.fixedExpenses.length > 0) {
       setItems(sanitizeAndMergeFixedExpenses([], cached.fixedExpenses))
       setIsUsingCache(true)
-      setLoading(false)
-      setBackgroundSyncing(true)
     } else {
-      // Precarga inmediata de las 8 categorías oficiales de la plantilla
       setItems(sanitizeAndMergeFixedExpenses([], []))
       setIsUsingCache(false)
-      setLoading(true)
-      setBackgroundSyncing(true)
     }
-
-    async function loadData() {
-      try {
-        setError(null)
-        const res = await getFixedExpenses(month)
-        if (!isMounted) return
-        if (res?.fixedExpenses) {
-          setItems(sanitizeAndMergeFixedExpenses([], res.fixedExpenses))
-        }
-        setIsUsingCache(false)
-      } catch (err) {
-        if (!isMounted) return
-        if (!hasCache) {
-          setError(err.message || 'Error al cargar los gastos fijos')
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false)
-          setBackgroundSyncing(false)
-        }
-      }
-    }
-
-    loadData()
-    return () => {
-      isMounted = false
-    }
+    setLoading(false)
+    setBackgroundSyncing(false)
   }, [month])
 
+  // Escuchar cambios en la pila de push
+  useEffect(() => {
+    const unsub = subscribePushQueue((q) => {
+      const set = new Set()
+      q.forEach((t) => {
+        if (t.month === month && (t.action === 'setFixedExpenseStatus' || t.action === 'setFixedExpenseAmount')) {
+          set.add(t.payload?.row)
+        }
+      })
+      setPendingRowTasks(set)
+    })
+    return () => unsub()
+  }, [month])
+
+  // Descarga desde Excel bajo petición expresa del usuario
   const handleRefresh = async () => {
+    const q = getPushQueue()
+    const hasUnpushed = q.some(
+      (t) => t.month === month && (t.action === 'setFixedExpenseStatus' || t.action === 'setFixedExpenseAmount')
+    )
+    if (hasUnpushed) {
+      const confirmed = window.confirm(
+        `Tienes casillas o importes modificados en local que están pendientes de subir al Excel.\n\nSi descargas ahora desde Sheets se sustituirán tus cambios locales.\n\n¿Deseas descargar de todos modos?`
+      )
+      if (!confirmed) return
+    }
+
     setLoading(true)
     setBackgroundSyncing(true)
     setError(null)
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+    const toastId = toast.loading('Descargando gastos fijos desde Excel...')
     try {
       const res = await getFixedExpenses(month)
       if (res?.fixedExpenses) {
         setItems(sanitizeAndMergeFixedExpenses([], res.fixedExpenses))
       }
-      if (res?.summary && onSummaryUpdate) {
-        onSummaryUpdate(res.summary.fixedExpenses, res.summary)
+      if (onSummaryUpdate) {
+        onSummaryUpdate(res?.totalActive, res?.summary)
       }
       setIsUsingCache(false)
-      toast.success('Gastos fijos actualizados')
+      toast.success('Gastos fijos descargados de Google Sheets', { id: toastId })
     } catch (err) {
       setError(err.message || 'Error al actualizar')
-      toast.error('Error al actualizar: ' + err.message)
+      toast.error('Error al actualizar: ' + err.message, { id: toastId })
     } finally {
       setLoading(false)
       setBackgroundSyncing(false)
@@ -114,8 +128,8 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
       if (res?.fixedExpenses) {
         setItems(sanitizeAndMergeFixedExpenses([], res.fixedExpenses))
       }
-      if (res?.summary && onSummaryUpdate) {
-        onSummaryUpdate(res.summary.fixedExpenses, res.summary)
+      if (onSummaryUpdate) {
+        onSummaryUpdate(res?.totalActive, res?.summary)
       }
       toast.success('Fórmulas comprobadas y configuradas con ";" y ","')
     } catch (err) {
@@ -131,71 +145,35 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
   const totalActiveAmount = items.reduce((sum, i) => (i.active ? sum + (i.amount || 0) : sum), 0)
   const totalPossibleAmount = items.reduce((sum, i) => sum + (i.amount || 0), 0)
 
-  // Cambiar estado de una casilla individual
-  const handleToggle = async (item) => {
+  // Cambiar estado de una casilla individual (Instantáneo en local)
+  const handleToggle = (item) => {
     const nextActive = !item.active
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
 
-    // Optimistic UI update seguro
-    const prevItems = [...items]
-    const updated = items.map((i) => (i.row === item.row ? { ...i, active: nextActive } : i))
-    setItems(sanitizeAndMergeFixedExpenses(prevItems, updated))
-    setSyncingRow(item.row)
-
-    // Notificar al componente padre del cambio en el total
-    const newTotal = updated.reduce((sum, i) => (i.active ? sum + (i.amount || 0) : sum), 0)
-    onSummaryUpdate?.(newTotal)
-
     try {
-      const res = await setFixedExpenseStatus(month, item.row, nextActive)
-      if (res?.fixedExpenses) {
-        setItems((prev) => sanitizeAndMergeFixedExpenses(prev, res.fixedExpenses))
-      }
-      if (res?.summary && onSummaryUpdate) {
-        onSummaryUpdate(res.summary.fixedExpenses, res.summary)
-      }
+      const res = stageSetFixedExpenseStatus(month, item.row, nextActive, item.category, item.amount)
+      setItems(res.fixedExpenses)
+      onSummaryUpdate?.(res.totalActive, res.summary)
     } catch (err) {
-      // Revertir en caso de fallo
-      setItems(prevItems)
-      const revertTotal = prevItems.reduce((sum, i) => (i.active ? sum + (i.amount || 0) : sum), 0)
-      onSummaryUpdate?.(revertTotal)
-      toast.error('No se pudo guardar la casilla: ' + err.message)
-    } finally {
-      setSyncingRow(null)
+      toast.error('Error al modificar casilla: ' + err.message)
     }
   }
 
-  // Marcar / desmarcar todos en lote
-  const handleToggleAll = async (targetActive) => {
-    if (batchSyncing || items.length === 0) return
+  // Marcar / desmarcar todos en lote (Instantáneo en local)
+  const handleToggleAll = (targetActive) => {
+    if (items.length === 0) return
     Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {})
 
-    const prevItems = [...items]
-    const updated = items.map((i) => ({ ...i, active: targetActive }))
-    setItems(sanitizeAndMergeFixedExpenses(prevItems, updated))
-    setBatchSyncing(true)
+    items.forEach((item) => {
+      stageSetFixedExpenseStatus(month, item.row, targetActive, item.category, item.amount)
+    })
 
-    const newTotal = updated.reduce((sum, i) => (i.active ? sum + (i.amount || 0) : sum), 0)
-    onSummaryUpdate?.(newTotal)
-
-    try {
-      const updates = items.map((i) => ({ row: i.row, active: targetActive }))
-      const res = await setFixedExpensesBatch(month, updates)
-      if (res?.fixedExpenses) {
-        setItems((prev) => sanitizeAndMergeFixedExpenses(prev, res.fixedExpenses))
-      }
-      if (res?.summary && onSummaryUpdate) {
-        onSummaryUpdate(res.summary.fixedExpenses, res.summary)
-      }
-      toast.success(targetActive ? 'Todas las casillas marcadas' : 'Todas las casillas desmarcadas')
-    } catch (err) {
-      setItems(prevItems)
-      const revertTotal = prevItems.reduce((sum, i) => (i.active ? sum + (i.amount || 0) : sum), 0)
-      onSummaryUpdate?.(revertTotal)
-      toast.error('Error al actualizar: ' + err.message)
-    } finally {
-      setBatchSyncing(false)
+    const cached = getCachedFixedExpenses(month)
+    if (cached?.fixedExpenses) {
+      setItems(cached.fixedExpenses)
+      onSummaryUpdate?.(cached.totalActive)
     }
+    toast.success(targetActive ? 'Todas las casillas marcadas (en local)' : 'Todas las casillas desmarcadas (en local)')
   }
 
   // Abrir editor de importe
@@ -206,8 +184,8 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
     setEditCategory(item.category || '')
   }
 
-  // Guardar nuevo importe
-  const handleSaveAmount = async (e) => {
+  // Guardar nuevo importe (Instantáneo en local)
+  const handleSaveAmount = (e) => {
     e?.preventDefault()
     if (!editingItem) return
     const numAmount = parseFloat(String(editAmount).replace(',', '.'))
@@ -216,41 +194,16 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
       return
     }
 
-    setSavingAmount(true)
     Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {})
 
-    const prevItems = [...items]
-    const updated = items.map((i) =>
-      i.row === editingItem.row
-        ? { ...i, amount: numAmount, category: editCategory.trim() || i.category }
-        : i
-    )
-    setItems(sanitizeAndMergeFixedExpenses(prevItems, updated))
-
-    // Notificar total nuevo
-    const newTotal = updated.reduce((sum, i) => (i.active ? sum + (i.amount || 0) : sum), 0)
-    onSummaryUpdate?.(newTotal)
-
     try {
-      const res = await setFixedExpenseAmount(month, editingItem.row, numAmount, editCategory.trim())
-      if (res?.error) {
-        throw new Error(res.error)
-      }
-      if (res?.fixedExpenses) {
-        setItems((prev) => sanitizeAndMergeFixedExpenses(prev, res.fixedExpenses))
-      }
-      if (res?.summary && onSummaryUpdate) {
-        onSummaryUpdate(res.summary.fixedExpenses, res.summary)
-      }
-      toast.success(`Importe de ${editCategory.trim() || editingItem.category} actualizado a ${fmt(numAmount)}`)
+      const res = stageSetFixedExpenseAmount(month, editingItem.row, numAmount, editCategory.trim())
+      setItems(res.fixedExpenses)
+      onSummaryUpdate?.(res.totalActive, res.summary)
+      toast.success(`Importe actualizado a ${fmt(numAmount)} (en local, pendiente de Push)`)
       setEditingItem(null)
     } catch (err) {
-      setItems(prevItems)
-      const revertTotal = prevItems.reduce((sum, i) => (i.active ? sum + (i.amount || 0) : sum), 0)
-      onSummaryUpdate?.(revertTotal)
-      toast.error('Error al guardar importe: ' + (err.message || 'Verifica tu conexión'))
-    } finally {
-      setSavingAmount(false)
+      toast.error('Error al guardar importe: ' + err.message)
     }
   }
 
@@ -289,12 +242,10 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100/70 text-amber-800 border border-amber-200/60">
                   {month}
                 </span>
-                {isUsingCache && backgroundSyncing && (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/90 px-2 py-0.5 rounded-full shadow-2xs">
-                    <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-600" />
-                    <span>datos cacheados</span>
-                  </span>
-                )}
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/90 px-2 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  Almacenado en local
+                </span>
               </div>
               <p className="text-xs text-slate-500">
                 Marca la casilla para computar el gasto en el mes
@@ -302,6 +253,20 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
             </div>
           </div>
           <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={loading || backgroundSyncing || repairing}
+              title="Descargar datos de gastos fijos desde Google Sheets bajo petición"
+              aria-label="Descargar gastos fijos desde Excel"
+              className="h-8 rounded-xl border-slate-200 text-slate-700 hover:bg-slate-100 flex items-center gap-1.5 px-2.5 text-xs font-semibold"
+            >
+              <Download className={`w-3.5 h-3.5 ${(loading || backgroundSyncing) ? 'animate-bounce text-amber-600' : 'text-slate-500'}`} />
+              <span className="hidden sm:inline">{loading || backgroundSyncing ? 'Descargando...' : 'Descargar de Excel'}</span>
+              <span className="sm:hidden">{loading || backgroundSyncing ? '...' : 'Descargar'}</span>
+            </Button>
             <button
               type="button"
               onClick={handleRepair}
@@ -311,15 +276,6 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
               className="w-8 h-8 rounded-full bg-slate-100 hover:bg-amber-100 text-slate-500 hover:text-amber-700 flex items-center justify-center transition-colors disabled:opacity-50"
             >
               <Wrench className={`w-3.5 h-3.5 ${repairing ? 'animate-spin text-amber-600' : ''}`} />
-            </button>
-            <button
-              type="button"
-              onClick={handleRefresh}
-              disabled={loading || backgroundSyncing || repairing}
-              aria-label="Actualizar gastos fijos"
-              className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200/80 text-slate-500 hover:text-slate-700 flex items-center justify-center transition-colors disabled:opacity-50"
-            >
-              <RefreshCw className={`w-4 h-4 ${(loading || backgroundSyncing) ? 'animate-spin text-amber-600' : ''}`} />
             </button>
             <button
               type="button"
@@ -466,13 +422,20 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                     </button>
 
                     <div className="min-w-0">
-                      <p
-                        className={`text-sm font-semibold truncate ${
-                          item.active ? 'text-slate-900' : 'text-slate-500'
-                        }`}
-                      >
-                        {item.category}
-                      </p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p
+                          className={`text-sm font-semibold truncate ${
+                            item.active ? 'text-slate-900' : 'text-slate-500'
+                          }`}
+                        >
+                          {item.category}
+                        </p>
+                        {pendingRowTasks.has(item.row) && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 border border-amber-200/90 shrink-0">
+                            📦 Pendiente Push
+                          </span>
+                        )}
+                      </div>
                       <span className="text-[11px] font-medium text-slate-400">
                         {item.active ? 'Aplicado este mes' : 'No contabilizado'}
                       </span>

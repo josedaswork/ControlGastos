@@ -1,7 +1,17 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Toaster, toast } from 'sonner'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
-import { RefreshCw, Plus, Settings, WalletCards, AlertTriangle, ArrowUpRight, Bug } from 'lucide-react'
+import {
+  RefreshCw,
+  Plus,
+  Settings,
+  WalletCards,
+  AlertTriangle,
+  ArrowUpRight,
+  Bug,
+  UploadCloud,
+  Download,
+} from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Button } from '@/components/ui/button'
 import { fmt } from '@/lib/utils'
@@ -28,9 +38,20 @@ import {
   clearAllCache,
   getCachedSummary,
   getCachedExpenses,
+  getCachedFixedExpenses,
   getCachedCategories,
   getCachedIncomeCategories,
   normalizeScriptUrl,
+  getPushQueue,
+  subscribePushQueue,
+  pushAllChanges,
+  pullMonthDataFromSheets,
+  stageAddExpense,
+  stageUpdateExpense,
+  stageDeleteExpense,
+  stageSetTotalIncome,
+  stageSetSavingsGoal,
+  stageAddIncome,
 } from '@/lib/sheetsApi'
 import { isDebugEnabled, subscribeLogs } from '@/lib/debugLogger'
 import MonthSelector from '@/components/MonthSelector'
@@ -45,6 +66,7 @@ import FinalizeMonthModal from '@/components/FinalizeMonthModal'
 import ChartsModal from '@/components/ChartsModal'
 import SetupScreen from '@/components/SetupScreen'
 import DebugLogViewer from '@/components/DebugLogViewer'
+import PushChangesModal from '@/components/PushChangesModal'
 import {
   MONTHS,
   getFinalizedMonths,
@@ -71,8 +93,12 @@ function App() {
   const [showSavingsGoalModal, setShowSavingsGoalModal] = useState(false)
   const [showFixedExpensesModal, setShowFixedExpensesModal] = useState(false)
   const [showChartsModal, setShowChartsModal] = useState(false)
+  const [showPushModal, setShowPushModal] = useState(false)
   const [editingExpense, setEditingExpense] = useState(null)
   const [deletingExpense, setDeletingExpense] = useState(null)
+  const [pushQueue, setPushQueue] = useState(() => getPushQueue())
+  const [pulling, setPulling] = useState(false)
+  const [quickPushing, setQuickPushing] = useState(false)
   const [pendingCount, setPendingCount] = useState(getPendingExpenses().length)
   const [syncing, setSyncing] = useState(false)
   const [sendingExpenses, setSendingExpenses] = useState([])
@@ -82,6 +108,13 @@ function App() {
   const queueRef = useRef([])
   const processingRef = useRef(false)
   const loadIdRef = useRef(0)
+
+  useEffect(() => {
+    const unsub = subscribePushQueue((q) => {
+      setPushQueue(q)
+    })
+    return () => unsub()
+  }, [])
 
   useEffect(() => {
     const unsub = subscribeLogs((currentLogs) => {
@@ -99,23 +132,42 @@ function App() {
 
     const currentLoadId = ++loadIdRef.current
 
-    // Show cached data instantly, or reset for the new month to avoid showing old month's data
-    const cachedSummary = getCachedSummary(monthName)
+    // Cargar datos locales de inmediato (0ms)
+    let cachedSummary = getCachedSummary(monthName)
     const cachedExpenses = getCachedExpenses(monthName)
-    const hasCache = !!(cachedSummary || (cachedExpenses?.expenses && cachedExpenses.expenses.length > 0))
+    const cachedFixed = getCachedFixedExpenses(monthName)
+    const hasCache = !!(cachedSummary || (cachedExpenses?.expenses && cachedExpenses.expenses.length > 0) || (cachedFixed?.fixedExpenses && cachedFixed.fixedExpenses.length > 0))
 
     if (cachedSummary) {
+      // Sincronizar gastos fijos si en la caché de fijos tenemos casillas activas
+      const fixedTot = cachedFixed?.totalActive ?? 0
+      const currentFixedInSummary = cachedSummary.fixedExpenses ?? cachedSummary.fixed ?? 0
+      if (fixedTot > 0 && currentFixedInSummary === 0) {
+        const varExp = cachedSummary.variableExpenses || 0
+        const inc = cachedSummary.income || 0
+        const sav = cachedSummary.desiredSavings || 0
+        const newTotal = Math.round((fixedTot + varExp) * 100) / 100
+        const newRem = Math.round((inc - newTotal - sav) * 100) / 100
+        cachedSummary = {
+          ...cachedSummary,
+          fixedExpenses: fixedTot,
+          totalExpenses: newTotal,
+          remainingMonth: newRem,
+          savings: newRem,
+        }
+      }
       setSummary(cachedSummary)
     } else {
+      const fixedTot = cachedFixed?.totalActive || 0
       setSummary({
         month: monthName,
         income: 0,
-        fixedExpenses: 0,
+        fixedExpenses: fixedTot,
         variableExpenses: 0,
         desiredSavings: 0,
-        totalExpenses: 0,
-        remainingMonth: 0,
-        savings: 0,
+        totalExpenses: fixedTot,
+        remainingMonth: -fixedTot,
+        savings: -fixedTot,
       })
     }
 
@@ -127,23 +179,17 @@ function App() {
 
     setIsUsingCache(hasCache)
 
-    // Solo comprobar si el número de filas coincide con las guardadas en caché
-    const knownRowCount = (!force && cachedExpenses?.lastRow) ? cachedExpenses.lastRow : null
+    // Si ya tenemos datos en local y no es un force explícito, no bloqueamos la UI con peticiones de red
+    if (hasCache && !force) {
+      setLoading(false)
+      return
+    }
 
-    // Carga rápida en segundo plano (~80ms si el número de filas no ha cambiado)
-    setLoading(!hasCache)
+    // Solo si no hay datos en caché en absoluto para este mes, intentamos una carga inicial
+    setLoading(true)
     try {
-      const monthData = await getMonthData(monthName, knownRowCount)
-
-      // Discard if month changed while fetching
+      const monthData = await getMonthData(monthName, null)
       if (currentLoadId !== loadIdRef.current) return
-
-      if (monthData?.unchanged) {
-        // El número de filas coincide con las guardadas en Sheets, los datos no han cambiado
-        setIsUsingCache(false)
-        setLoading(false)
-        return
-      }
 
       if (monthData?.summary) {
         setSummary(monthData.summary)
@@ -151,21 +197,57 @@ function App() {
       const serverExpenses = monthData?.expenses || []
       setExpenses(serverExpenses)
       setIsUsingCache(false)
-
-      // Reconcile pending expenses to avoid duplicates
-      reconcilePendingExpenses(monthName, serverExpenses)
-      setPendingCount(getPendingExpenses().length)
     } catch (err) {
       if (currentLoadId !== loadIdRef.current) return
-      if (!cachedSummary && !cachedExpenses) {
-        toast.error('Error cargando datos: ' + err.message)
-      } else {
-        toast.info('Sin conexión con Sheets. Mostrando datos cacheados.', { duration: 2500 })
-      }
+      console.warn('Carga inicial de mes:', err.message)
     } finally {
       if (currentLoadId === loadIdRef.current) setLoading(false)
     }
   }, [scriptUrl, monthName])
+
+  const handlePullMonthData = async (forceBypass = false) => {
+    if (pulling || !scriptUrl) return
+    const pendingInThisMonth = pushQueue.filter((t) => t.month === monthName)
+    if (!forceBypass && pendingInThisMonth.length > 0) {
+      const confirmed = window.confirm(
+        `Tienes ${pendingInThisMonth.length} cambio(s) pendiente(s) de subir en ${monthName}.\n\nSi descargas ahora de Excel, tus cambios locales no subidos podrían sobreescribirse.\n\n¿Deseas descargar de todos modos?`
+      )
+      if (!confirmed) return
+    }
+
+    setPulling(true)
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+    const toastId = toast.loading(`Descargando datos de ${monthName} desde Excel...`)
+    try {
+      const data = await pullMonthDataFromSheets(monthName)
+      if (data?.summary) setSummary(data.summary)
+      if (data?.expenses) setExpenses(data.expenses)
+      Haptics.notification({ type: 'success' }).catch(() => {})
+      toast.success(`Datos de ${monthName} descargados de Google Sheets`, { id: toastId })
+    } catch (err) {
+      toast.error('Error al descargar del Excel: ' + err.message, { id: toastId })
+    } finally {
+      setPulling(false)
+    }
+  }
+
+  const handleQuickPush = async () => {
+    if (quickPushing || pushQueue.length === 0) return
+    Haptics.impact({ style: ImpactStyle.Heavy }).catch(() => {})
+    setQuickPushing(true)
+    const toastId = toast.loading(`Subiendo ${pushQueue.length} cambio(s) a Google Sheets...`)
+    try {
+      const res = await pushAllChanges()
+      Haptics.notification({ type: 'success' }).catch(() => {})
+      toast.success(`¡${res.count} cambio(s) subidos a Excel con éxito!`, { id: toastId })
+      loadData(false)
+    } catch (err) {
+      Haptics.notification({ type: 'error' }).catch(() => {})
+      toast.error('Error al subir cambios: ' + err.message, { id: toastId })
+    } finally {
+      setQuickPushing(false)
+    }
+  }
 
   const loadCategories = useCallback(async () => {
     if (!scriptUrl) return
@@ -203,226 +285,87 @@ function App() {
     if (categories.length === 0) loadCategories()
   }
 
-  const handleAddExpense = async (category, amount, type = 'expense') => {
+  const handleAddExpense = (category, amount, type = 'expense') => {
     const cleanCat = String(category || '').trim()
+    const numAmount = parseFloat(String(amount).replace(',', '.'))
+    if (!cleanCat || isNaN(numAmount) || numAmount <= 0) return
+
     setShowAddModal(false)
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
 
-    // Caso 1: Ingreso (+)
     if (type === 'income') {
       const incCat = cleanCat || 'Euromar'
-      const previousSummary = summary
-      // Actualización optimista inmediata en UI
-      setSummary((prev) => {
-        const inc = (prev?.income || 0) + amount
-        const fixed = prev?.fixedExpenses || 0
-        const variable = prev?.variableExpenses || 0
-        const savingsGoal = prev?.desiredSavings || 0
-        const rem = inc - fixed - variable - savingsGoal
-        return {
-          ...prev,
-          month: monthName,
-          income: inc,
-          remainingMonth: rem,
-          savings: rem,
-        }
-      })
-
-      const toastId = toast.loading(`Guardando ingreso "${incCat}" (${fmt(amount)})...`)
-      try {
-        const res = await apiAddIncome(monthName, incCat, amount)
-        Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
-        toast.success(`Ingreso "${incCat}" añadido a la columna de ingresos`, { id: toastId })
-        if (res?.summary) {
-          setSummary(res.summary)
-        }
-      } catch (err) {
-        if (previousSummary) {
-          setSummary(previousSummary)
-        }
-        toast.error('Error al guardar ingreso: ' + err.message, { id: toastId, duration: 4000 })
-      }
+      const res = stageAddIncome(monthName, incCat, numAmount)
+      if (res?.summary) setSummary(res.summary)
+      toast.success(`Ingreso "${incCat}" guardado en local (pendiente de Push)`)
       return
     }
 
-    // Caso 2: Gasto variable (-)
-    if (cleanCat) {
-      setCategories((prev) => (prev.includes(cleanCat) ? prev : [...prev, cleanCat]))
-    }
-
-    // Actualización optimista de resumen en UI
-    setSummary((prev) => {
-      const fixed = prev?.fixedExpenses || 0
-      const variable = (prev?.variableExpenses || 0) + amount
-      const total = fixed + variable
-      const inc = prev?.income || 0
-      const savingsGoal = prev?.desiredSavings || 0
-      const rem = inc - total - savingsGoal
-      return {
-        ...prev,
-        month: monthName,
-        variableExpenses: variable,
-        totalExpenses: total,
-        remainingMonth: rem,
-        savings: rem,
-      }
-    })
-
-    const expense = { id: `q_${Date.now()}_${Math.random().toString(36).slice(2)}`, month: monthName, category: cleanCat, amount }
-    queueRef.current = [...queueRef.current, expense]
-    setSendingExpenses([...queueRef.current])
-    toast('Enviando gasto...', { icon: '📤', duration: 1500 })
-    processQueue()
+    const res = stageAddExpense(monthName, cleanCat, numAmount)
+    if (res?.summary) setSummary(res.summary)
+    if (res?.expenses) setExpenses(res.expenses)
+    setCategories((prev) => (prev.includes(cleanCat) ? prev : [...prev, cleanCat]))
+    toast.success(`"${cleanCat}" guardado en local (pendiente de Push)`)
   }
 
-  const processQueue = async () => {
-    if (processingRef.current) return
-    processingRef.current = true
-
-    while (queueRef.current.length > 0) {
-      const item = queueRef.current[0]
-      try {
-        const res = await addExpenseDirect(item.month, item.category, item.amount)
-        queueRef.current = queueRef.current.slice(1)
-        setSendingExpenses([...queueRef.current])
-        toast.success(`"${item.category}" añadido`)
-        if (item.month === monthName) {
-          if (res?.summary) setSummary(res.summary)
-          if (res?.expenses) setExpenses(res.expenses)
-        }
-      } catch {
-        addToPending(item.month, item.category, item.amount)
-        queueRef.current = queueRef.current.slice(1)
-        setSendingExpenses([...queueRef.current])
-        setPendingCount(getPendingExpenses().length)
-        toast.error(`Sin conexión — "${item.category}" guardado`)
-      }
-    }
-
-    processingRef.current = false
-  }
-
-  const handleEditExpense = async (expense, newCategory, newAmount) => {
+  const handleEditExpense = (expense, newCategory, newAmount) => {
     setEditingExpense(null)
     const cleanCat = String(newCategory || '').trim()
-    if (cleanCat) {
-      setCategories((prev) => (prev.includes(cleanCat) ? prev : [...prev, cleanCat]))
-    }
-    const toastId = toast.loading('Actualizando gasto...')
-    try {
-      const res = await apiUpdateExpense(monthName, expense.row, expense.category, expense.amount, cleanCat, newAmount)
-      Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
-      toast.success('Gasto actualizado', { id: toastId })
-      if (res?.summary) setSummary(res.summary)
-      if (res?.expenses) setExpenses(res.expenses)
-      else loadData()
-    } catch (err) {
-      toast.error('Error actualizando: ' + err.message, { id: toastId })
-    }
+    const numAmount = parseFloat(String(newAmount).replace(',', '.'))
+    if (!cleanCat || isNaN(numAmount) || numAmount <= 0) return
+
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+    const res = stageUpdateExpense(monthName, expense.row, expense.category, expense.amount, cleanCat, numAmount)
+    if (res?.summary) setSummary(res.summary)
+    if (res?.expenses) setExpenses(res.expenses)
+    setCategories((prev) => (prev.includes(cleanCat) ? prev : [...prev, cleanCat]))
+    toast.success('Gasto modificado en local (pendiente de Push)')
   }
 
   const handleDeleteExpense = (expense) => {
     setDeletingExpense(expense)
   }
 
-  const confirmDeleteExpense = async () => {
+  const confirmDeleteExpense = () => {
     const expense = deletingExpense
     if (!expense) return
     setDeletingExpense(null)
-    const toastId = toast.loading('Eliminando gasto...')
-    try {
-      const res = await apiDeleteExpense(monthName, expense.row, expense.category, expense.amount)
-      Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
-      toast.success('Gasto eliminado', { id: toastId })
-      if (res?.summary) setSummary(res.summary)
-      if (res?.expenses) setExpenses(res.expenses)
-      else loadData()
-    } catch (err) {
-      toast.error('Error eliminando: ' + err.message, { id: toastId })
-    }
+
+    Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {})
+    const res = stageDeleteExpense(monthName, expense.row, expense.category, expense.amount)
+    if (res?.summary) setSummary(res.summary)
+    if (res?.expenses) setExpenses(res.expenses)
+    toast.success('Gasto eliminado en local (pendiente de Push)')
   }
 
-  const handleSaveIncome = async (newAmount) => {
-    const previousSummary = summary
-
-    // Immediate Optimistic UI update
-    setSummary((prev) => {
-      const fixed = prev?.fixedExpenses || 0
-      const variable = prev?.variableExpenses || 0
-      const savingsGoal = prev?.desiredSavings || 0
-      const rem = newAmount - fixed - variable - savingsGoal
-      return {
-        ...prev,
-        month: monthName,
-        income: newAmount,
-        remainingMonth: rem,
-        savings: rem,
-      }
-    })
-
-    const toastId = toast.loading('Guardando ingresos en Sheets...')
-    try {
-      const res = await apiSetTotalIncome(monthName, newAmount)
-      Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
-      toast.success(`Ingresos de ${monthName} actualizados a ${fmt(newAmount)}`, { id: toastId })
-      if (res?.summary) {
-        setSummary(res.summary)
-      }
-    } catch (err) {
-      if (previousSummary) {
-        setSummary(previousSummary)
-      }
-      toast.error('Error actualizando ingresos: ' + err.message, { id: toastId, duration: 5000 })
-    }
+  const handleSaveIncome = (newAmount) => {
+    Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {})
+    const res = stageSetTotalIncome(monthName, newAmount)
+    if (res?.summary) setSummary(res.summary)
+    toast.success(`Ingresos guardados en local (${fmt(newAmount)}, pendiente de Push)`)
   }
 
-  const handleSaveSavingsGoal = async (newGoal) => {
-    const previousSummary = summary
-
-    // Immediate Optimistic UI update
-    setSummary((prev) => {
-      const inc = prev?.income || 0
-      const fixed = prev?.fixedExpenses || 0
-      const variable = prev?.variableExpenses || 0
-      const rem = inc - fixed - variable - newGoal
-      return {
-        ...prev,
-        month: monthName,
-        desiredSavings: newGoal,
-        remainingMonth: rem,
-        savings: rem,
-      }
-    })
-
-    const toastId = toast.loading('Guardando meta de ahorro...')
-    try {
-      const res = await apiSetSavingsGoal(monthName, newGoal)
-      Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
-      toast.success(`Meta de ahorro de ${monthName} actualizada a ${fmt(newGoal)}`, { id: toastId })
-      if (res?.summary) {
-        setSummary(res.summary)
-      }
-    } catch (err) {
-      if (previousSummary) {
-        setSummary(previousSummary)
-      }
-      toast.error('Error actualizando meta: ' + err.message, { id: toastId, duration: 5000 })
-    }
+  const handleSaveSavingsGoal = (newGoal) => {
+    Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {})
+    const res = stageSetSavingsGoal(monthName, newGoal)
+    if (res?.summary) setSummary(res.summary)
+    toast.success(`Meta de ahorro guardada en local (${fmt(newGoal)}, pendiente de Push)`)
   }
 
   const handleFixedExpensesUpdate = (newFixedTotal, updatedSummary) => {
     if (updatedSummary) {
       setSummary(updatedSummary)
-    } else {
+    } else if (newFixedTotal !== undefined && !isNaN(newFixedTotal)) {
       setSummary((prev) => {
         if (!prev) return prev
-        const prevFixed = prev.fixedExpenses ?? 0
+        const prevFixed = prev.fixedExpenses ?? prev.fixed ?? 0
         const diff = newFixedTotal - prevFixed
         const prevRemaining = prev.remainingMonth ?? prev.savings ?? 0
         return {
           ...prev,
           fixedExpenses: newFixedTotal,
           remainingMonth: prevRemaining - diff,
+          savings: prevRemaining - diff,
         }
       })
     }
@@ -571,7 +514,53 @@ function App() {
           </div>
 
           <div className="flex items-center gap-1.5">
-            {/* Spreadsheet Link Button (Flecha en diagonal arriba a la derecha) */}
+            {/* Push Changes Button */}
+            <motion.button
+              type="button"
+              onClick={() => {
+                Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+                setShowPushModal(true)
+              }}
+              whileTap={{ scale: 0.88 }}
+              aria-label="Ver paquete de cambios pendientes (Push)"
+              title={
+                pushQueue.length > 0
+                  ? `${pushQueue.length} cambio(s) pendiente(s) de subir al Excel (Push)`
+                  : 'Cola de Push: Sin cambios pendientes'
+              }
+              className={`relative w-10 h-10 rounded-2xl border shadow-xs flex items-center justify-center transition-all ${
+                pushQueue.length > 0
+                  ? 'bg-blue-600 border-blue-500 text-white shadow-blue-500/25 ring-2 ring-blue-400/30'
+                  : 'bg-white border-slate-200/80 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <UploadCloud className={`h-4.5 w-4.5 ${quickPushing ? 'animate-bounce' : ''}`} />
+              {pushQueue.length > 0 && (
+                <motion.span
+                  initial={{ scale: 0 }}
+                  animate={{ scale: [1, 1.25, 1] }}
+                  transition={{ duration: 0.3 }}
+                  className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center shadow-xs ring-2 ring-white"
+                >
+                  {pushQueue.length}
+                </motion.span>
+              )}
+            </motion.button>
+
+            {/* Pull Button (Descargar datos del mes de Google Sheets bajo petición) */}
+            <motion.button
+              type="button"
+              onClick={() => handlePullMonthData(false)}
+              disabled={loading || pulling}
+              whileTap={{ scale: 0.88 }}
+              aria-label="Descargar datos de Excel para este mes"
+              title={`Descargar datos de ${monthName} desde Google Sheets bajo petición`}
+              className="relative w-10 h-10 rounded-2xl bg-white border border-slate-200/80 shadow-xs hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors disabled:opacity-50"
+            >
+              <Download className={`h-4.5 w-4.5 ${pulling ? 'animate-bounce text-primary' : ''}`} />
+            </motion.button>
+
+            {/* Spreadsheet Link Button */}
             <motion.a
               href={spreadsheetUrl}
               target="_blank"
@@ -586,28 +575,6 @@ function App() {
             >
               <ArrowUpRight className="h-4.5 w-4.5" />
             </motion.a>
-
-            {/* Sync Button */}
-            <motion.button
-              type="button"
-              onClick={handleSync}
-              disabled={loading || syncing}
-              whileTap={{ scale: 0.88, rotate: -45 }}
-              aria-label="Sincronizar con Google Sheets"
-              className="relative w-10 h-10 rounded-2xl bg-white border border-slate-200/80 shadow-xs hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors disabled:opacity-50"
-            >
-              <RefreshCw className={`h-4 w-4 ${(loading || syncing) ? 'animate-spin text-primary' : ''}`} />
-              {pendingCount > 0 && (
-                <motion.span
-                  initial={{ scale: 0 }}
-                  animate={{ scale: [1, 1.25, 1] }}
-                  transition={{ duration: 0.3 }}
-                  className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center shadow-xs"
-                >
-                  {pendingCount}
-                </motion.span>
-              )}
-            </motion.button>
 
             {/* Quick Debug Button (Only if DEBUG is enabled in settings) */}
             {debugActive && (
@@ -695,6 +662,54 @@ function App() {
             onDelete={handleDeleteExpense}
           />
         </main>
+
+        {/* Floating / Sticky Push Changes Action Bar */}
+        <AnimatePresence>
+          {pushQueue.length > 0 && (
+            <motion.div
+              initial={{ y: 50, opacity: 0, scale: 0.95 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 50, opacity: 0, scale: 0.95 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+              className="fixed bottom-6 left-4 right-22 max-w-sm z-40"
+            >
+              <div className="bg-slate-900/95 backdrop-blur-md text-white rounded-2xl p-2 pl-3 pr-2 shadow-xl shadow-slate-900/30 border border-slate-700/80 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+                    setShowPushModal(true)
+                  }}
+                  className="flex items-center gap-2 flex-1 min-w-0 text-left cursor-pointer group"
+                >
+                  <div className="w-7 h-7 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-400/30">
+                    <UploadCloud className="w-3.5 h-3.5 animate-pulse" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-white group-hover:text-blue-300 transition-colors truncate">
+                      {pushQueue.length} {pushQueue.length === 1 ? 'cambio' : 'cambios'}
+                    </p>
+                    <p className="text-[10px] text-slate-400 truncate">
+                      Toca para ver
+                    </p>
+                  </div>
+                </button>
+
+                <motion.div whileTap={{ scale: 0.92 }}>
+                  <Button
+                    size="sm"
+                    onClick={handleQuickPush}
+                    disabled={quickPushing}
+                    className="h-7.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-2.5 shadow-xs border border-blue-400/30 flex items-center gap-1.5 shrink-0"
+                  >
+                    <UploadCloud className={`w-3 h-3 ${quickPushing ? 'animate-bounce' : ''}`} />
+                    <span>{quickPushing ? 'Subiendo...' : 'Push'}</span>
+                  </Button>
+                </motion.div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Google Pixel Signature Material 3 Floating Action Button (FAB) */}
         <div className="fixed bottom-6 right-6 z-40 sm:sticky sm:self-end sm:mr-6 sm:bottom-6 sm:mt-auto">
@@ -843,6 +858,18 @@ function App() {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Push Changes Batch Modal */}
+      <AnimatePresence>
+        {showPushModal && (
+          <PushChangesModal
+            isOpen={showPushModal}
+            onClose={() => setShowPushModal(false)}
+            queue={pushQueue}
+            onPushed={() => loadData(false)}
+          />
         )}
       </AnimatePresence>
 

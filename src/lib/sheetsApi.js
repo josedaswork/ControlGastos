@@ -4,6 +4,50 @@ const STORAGE_KEY = 'sheets_script_url'
 const SPREADSHEET_URL_STORAGE_KEY = 'sheets_spreadsheet_url'
 const DATA_CACHE_KEY = 'sheets_data_cache'
 const PENDING_KEY = 'sheets_pending_expenses'
+const PUSH_QUEUE_KEY = 'sheets_push_queue'
+
+const pushQueueListeners = new Set()
+
+export function getPushQueue() {
+  try {
+    return JSON.parse(localStorage.getItem(PUSH_QUEUE_KEY) || '[]')
+  } catch {
+    return []
+  }
+}
+
+export function savePushQueue(queue) {
+  localStorage.setItem(PUSH_QUEUE_KEY, JSON.stringify(queue))
+  notifyPushQueueListeners()
+}
+
+export function subscribePushQueue(fn) {
+  pushQueueListeners.add(fn)
+  try {
+    fn(getPushQueue())
+  } catch (_) {}
+  return () => pushQueueListeners.delete(fn)
+}
+
+function notifyPushQueueListeners() {
+  const currentQueue = getPushQueue()
+  pushQueueListeners.forEach((fn) => {
+    try {
+      fn(currentQueue)
+    } catch (_) {}
+  })
+}
+
+export function removePushTask(taskId) {
+  const current = getPushQueue()
+  const filtered = current.filter((t) => t.id !== taskId)
+  savePushQueue(filtered)
+}
+
+export function clearPushQueue() {
+  localStorage.removeItem(PUSH_QUEUE_KEY)
+  notifyPushQueueListeners()
+}
 
 export { isDebugEnabled, logTask, startTask } from './debugLogger'
 
@@ -467,6 +511,609 @@ export function reconcilePendingExpenses(month, serverExpenses = []) {
   }
 }
 
+/* ================================================================
+ *  LOCAL-FIRST STAGING SYSTEM (PILA / PAQUETE PENDIENTE DE PUSH)
+ * ================================================================ */
+
+export function stageAddExpense(month, category, amount) {
+  const cleanCat = String(category || '').trim()
+  const numAmt = parseFloat(String(amount).replace(',', '.'))
+  if (!cleanCat || isNaN(numAmt) || numAmt <= 0) {
+    throw new Error('Categoría o importe no válido')
+  }
+
+  // 1. Guardar en gastos locales del mes
+  const cachedExp = getCachedExpenses(month) || { expenses: [], month }
+  const localRow = `local_${Date.now()}_${Math.floor(Math.random() * 1000)}`
+  const newExpense = {
+    row: localRow,
+    category: cleanCat,
+    amount: numAmt,
+    isLocal: true,
+  }
+  const updatedExpenses = [...(cachedExp.expenses || []), newExpense]
+  setCacheEntry('expenses_' + month, { ...cachedExp, expenses: updatedExpenses })
+
+  // 2. Recalcular y guardar resumen local
+  const cachedSum = getCachedSummary(month) || {
+    month,
+    income: 0,
+    fixedExpenses: 0,
+    variableExpenses: 0,
+    desiredSavings: 0,
+    totalExpenses: 0,
+    remainingMonth: 0,
+    savings: 0,
+  }
+  const newVar = (cachedSum.variableExpenses || 0) + numAmt
+  const newTot = (cachedSum.fixedExpenses || 0) + newVar
+  const rem = (cachedSum.income || 0) - newTot - (cachedSum.desiredSavings || 0)
+  const updatedSummary = {
+    ...cachedSum,
+    variableExpenses: Math.round(newVar * 100) / 100,
+    totalExpenses: Math.round(newTot * 100) / 100,
+    remainingMonth: Math.round(rem * 100) / 100,
+    savings: Math.round(rem * 100) / 100,
+  }
+  setCacheEntry('summary_' + month, updatedSummary)
+
+  // 3. Añadir categoría a caché local si es nueva
+  const cachedCats = getCacheEntry('categories')
+  if (cachedCats && Array.isArray(cachedCats.categories) && !cachedCats.categories.includes(cleanCat)) {
+    setCacheEntry('categories', { ...cachedCats, categories: [...cachedCats.categories, cleanCat] })
+  }
+
+  // 4. Encolar tarea en la pila de Push
+  const queue = getPushQueue()
+  const task = {
+    id: `add_exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    action: 'addExpense',
+    month,
+    payload: { category: cleanCat, amount: numAmt, localRow },
+    title: 'Añadir gasto',
+    description: `${cleanCat} · ${numAmt.toFixed(2)} €`,
+    badge: `+${numAmt.toFixed(2)} €`,
+    category: cleanCat,
+    amount: numAmt,
+    timestamp: Date.now(),
+  }
+  savePushQueue([...queue, task])
+
+  return { success: true, summary: updatedSummary, expenses: updatedExpenses, expense: newExpense }
+}
+
+export function stageUpdateExpense(month, row, oldCategory, oldAmount, newCategory, newAmount) {
+  const cleanCat = String(newCategory || '').trim()
+  const numAmt = parseFloat(String(newAmount).replace(',', '.'))
+  const oldAmt = parseFloat(String(oldAmount).replace(',', '.')) || 0
+
+  if (!cleanCat || isNaN(numAmt) || numAmt <= 0) {
+    throw new Error('Categoría o importe no válido')
+  }
+
+  // 1. Modificar en gastos locales
+  const cachedExp = getCachedExpenses(month) || { expenses: [], month }
+  const updatedExpenses = (cachedExp.expenses || []).map((e) =>
+    e.row === row ? { ...e, category: cleanCat, amount: numAmt, isLocal: true } : e
+  )
+  setCacheEntry('expenses_' + month, { ...cachedExp, expenses: updatedExpenses })
+
+  // 2. Modificar resumen local
+  const cachedSum = getCachedSummary(month) || {}
+  const diff = numAmt - oldAmt
+  const newVar = (cachedSum.variableExpenses || 0) + diff
+  const newTot = (cachedSum.fixedExpenses || 0) + newVar
+  const rem = (cachedSum.income || 0) - newTot - (cachedSum.desiredSavings || 0)
+  const updatedSummary = {
+    ...cachedSum,
+    variableExpenses: Math.round(newVar * 100) / 100,
+    totalExpenses: Math.round(newTot * 100) / 100,
+    remainingMonth: Math.round(rem * 100) / 100,
+    savings: Math.round(rem * 100) / 100,
+  }
+  setCacheEntry('summary_' + month, updatedSummary)
+
+  // 3. Cola de Push
+  const queue = getPushQueue()
+  let handled = false
+  const updatedQueue = queue.map((t) => {
+    if (t.action === 'addExpense' && t.payload?.localRow === row) {
+      handled = true
+      return {
+        ...t,
+        payload: { ...t.payload, category: cleanCat, amount: numAmt },
+        description: `${cleanCat} · ${numAmt.toFixed(2)} €`,
+        badge: `+${numAmt.toFixed(2)} €`,
+        category: cleanCat,
+        amount: numAmt,
+      }
+    }
+    return t
+  })
+
+  if (!handled) {
+    updatedQueue.push({
+      id: `upd_exp_${month}_${row}_${Date.now()}`,
+      action: 'updateExpense',
+      month,
+      payload: { row, oldCategory, oldAmount, newCategory: cleanCat, newAmount: numAmt },
+      title: 'Modificar gasto',
+      description: `${oldCategory} → ${cleanCat} (${numAmt.toFixed(2)} €)`,
+      badge: `${numAmt.toFixed(2)} €`,
+      category: cleanCat,
+      amount: numAmt,
+      timestamp: Date.now(),
+    })
+  }
+
+  savePushQueue(updatedQueue)
+  return { success: true, summary: updatedSummary, expenses: updatedExpenses }
+}
+
+export function stageDeleteExpense(month, row, category, amount) {
+  const numAmt = parseFloat(String(amount).replace(',', '.')) || 0
+
+  // 1. Eliminar de gastos locales
+  const cachedExp = getCachedExpenses(month) || { expenses: [], month }
+  const updatedExpenses = (cachedExp.expenses || []).filter((e) => e.row !== row)
+  setCacheEntry('expenses_' + month, { ...cachedExp, expenses: updatedExpenses })
+
+  // 2. Modificar resumen local
+  const cachedSum = getCachedSummary(month) || {}
+  const newVar = Math.max(0, (cachedSum.variableExpenses || 0) - numAmt)
+  const newTot = (cachedSum.fixedExpenses || 0) + newVar
+  const rem = (cachedSum.income || 0) - newTot - (cachedSum.desiredSavings || 0)
+  const updatedSummary = {
+    ...cachedSum,
+    variableExpenses: Math.round(newVar * 100) / 100,
+    totalExpenses: Math.round(newTot * 100) / 100,
+    remainingMonth: Math.round(rem * 100) / 100,
+    savings: Math.round(rem * 100) / 100,
+  }
+  setCacheEntry('summary_' + month, updatedSummary)
+
+  // 3. Cola de Push
+  const queue = getPushQueue()
+  const isUnpushedAdd = queue.some((t) => t.action === 'addExpense' && t.payload?.localRow === row)
+  if (isUnpushedAdd) {
+    savePushQueue(queue.filter((t) => !(t.action === 'addExpense' && t.payload?.localRow === row)))
+  } else {
+    const task = {
+      id: `del_exp_${month}_${row}_${Date.now()}`,
+      action: 'deleteExpense',
+      month,
+      payload: { row, category, amount: numAmt },
+      title: 'Eliminar gasto',
+      description: `${category} · ${numAmt.toFixed(2)} €`,
+      badge: `-${numAmt.toFixed(2)} €`,
+      category,
+      amount: numAmt,
+      timestamp: Date.now(),
+    }
+    savePushQueue([...queue, task])
+  }
+
+  return { success: true, summary: updatedSummary, expenses: updatedExpenses }
+}
+
+export function stageSetFixedExpenseStatus(month, row, active, category = '', amount = 0) {
+  const cachedFixed = getCachedFixedExpenses(month)
+  const currentList =
+    cachedFixed?.fixedExpenses && cachedFixed.fixedExpenses.length > 0
+      ? cachedFixed.fixedExpenses
+      : sanitizeAndMergeFixedExpenses([], [])
+  const numRow = parseInt(row, 10)
+
+  const updatedExpenses = sanitizeAndMergeFixedExpenses(
+    currentList,
+    currentList.map((fe) => (fe.row === numRow ? { ...fe, active } : fe))
+  )
+  const newTotalActive = updatedExpenses.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+
+  setCacheEntry('fixed_expenses_' + month, {
+    month,
+    fixedExpenses: updatedExpenses,
+    totalActive: newTotalActive,
+    hasCheckbox: true,
+  })
+
+  // Summary
+  const cachedSum = getCachedSummary(month) || {}
+  const prevFixed = cachedSum.fixedExpenses || 0
+  const diff = newTotalActive - prevFixed
+  const newTot = newTotalActive + (cachedSum.variableExpenses || 0)
+  const rem = (cachedSum.income || 0) - newTot - (cachedSum.desiredSavings || 0)
+  const updatedSummary = {
+    ...cachedSum,
+    fixedExpenses: Math.round(newTotalActive * 100) / 100,
+    totalExpenses: Math.round(newTot * 100) / 100,
+    remainingMonth: Math.round(rem * 100) / 100,
+    savings: Math.round(rem * 100) / 100,
+  }
+  setCacheEntry('summary_' + month, updatedSummary)
+
+  // Push queue
+  const queue = getPushQueue()
+  const targetId = `fix_status_${month}_${numRow}`
+  const catName = category || updatedExpenses.find((e) => e.row === numRow)?.category || 'Gasto fijo'
+  const itemAmt = amount || updatedExpenses.find((e) => e.row === numRow)?.amount || 0
+
+  const filteredQueue = queue.filter((t) => t.id !== targetId)
+  const task = {
+    id: targetId,
+    action: 'setFixedExpenseStatus',
+    month,
+    payload: { row: numRow, active },
+    title: active ? 'Activar gasto fijo' : 'Desactivar gasto fijo',
+    description: `${catName} (${itemAmt.toFixed(2)} €)`,
+    badge: active ? 'Activo' : 'Desactivado',
+    category: catName,
+    amount: itemAmt,
+    timestamp: Date.now(),
+  }
+  savePushQueue([...filteredQueue, task])
+
+  return { success: true, summary: updatedSummary, fixedExpenses: updatedExpenses, totalActive: newTotalActive }
+}
+
+export function stageSetFixedExpenseAmount(month, row, amount, category = '') {
+  const numAmount = parseFloat(String(amount).replace(',', '.')) || 0
+  const cachedFixed = getCachedFixedExpenses(month)
+  const currentList =
+    cachedFixed?.fixedExpenses && cachedFixed.fixedExpenses.length > 0
+      ? cachedFixed.fixedExpenses
+      : sanitizeAndMergeFixedExpenses([], [])
+  const numRow = parseInt(row, 10)
+
+  const updatedExpenses = sanitizeAndMergeFixedExpenses(
+    currentList,
+    currentList.map((fe) =>
+      fe.row === numRow ? { ...fe, amount: numAmount, ...(category ? { category } : {}) } : fe
+    )
+  )
+  const newTotalActive = updatedExpenses.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+
+  setCacheEntry('fixed_expenses_' + month, {
+    month,
+    fixedExpenses: updatedExpenses,
+    totalActive: newTotalActive,
+    hasCheckbox: true,
+  })
+
+  // Summary
+  const cachedSum = getCachedSummary(month) || {}
+  const newTot = newTotalActive + (cachedSum.variableExpenses || 0)
+  const rem = (cachedSum.income || 0) - newTot - (cachedSum.desiredSavings || 0)
+  const updatedSummary = {
+    ...cachedSum,
+    fixedExpenses: Math.round(newTotalActive * 100) / 100,
+    totalExpenses: Math.round(newTot * 100) / 100,
+    remainingMonth: Math.round(rem * 100) / 100,
+    savings: Math.round(rem * 100) / 100,
+  }
+  setCacheEntry('summary_' + month, updatedSummary)
+
+  // Push queue
+  const queue = getPushQueue()
+  const targetId = `fix_amt_${month}_${numRow}`
+  const catName = category || updatedExpenses.find((e) => e.row === numRow)?.category || 'Gasto fijo'
+
+  const filteredQueue = queue.filter((t) => t.id !== targetId)
+  const task = {
+    id: targetId,
+    action: 'setFixedExpenseAmount',
+    month,
+    payload: { row: numRow, amount: numAmount, category: catName },
+    title: 'Modificar importe fijo',
+    description: `${catName} · ${numAmount.toFixed(2)} €`,
+    badge: `${numAmount.toFixed(2)} €`,
+    category: catName,
+    amount: numAmount,
+    timestamp: Date.now(),
+  }
+  savePushQueue([...filteredQueue, task])
+
+  return { success: true, summary: updatedSummary, fixedExpenses: updatedExpenses, totalActive: newTotalActive }
+}
+
+export function stageSetTotalIncome(month, amount, category = 'Euromar') {
+  const numAmount = parseFloat(String(amount).replace(',', '.')) || 0
+  const cachedSum = getCachedSummary(month) || {}
+
+  const fixed = cachedSum.fixedExpenses || 0
+  const variable = cachedSum.variableExpenses || 0
+  const desiredSavings = cachedSum.desiredSavings || 0
+  const rem = numAmount - fixed - variable - desiredSavings
+
+  const updatedSummary = {
+    ...cachedSum,
+    month,
+    income: numAmount,
+    remainingMonth: Math.round(rem * 100) / 100,
+    savings: Math.round(rem * 100) / 100,
+  }
+  setCacheEntry('summary_' + month, updatedSummary)
+
+  const queue = getPushQueue()
+  const targetId = `income_${month}`
+  const filteredQueue = queue.filter((t) => t.id !== targetId)
+  const task = {
+    id: targetId,
+    action: 'setTotalIncome',
+    month,
+    payload: { amount: numAmount, category },
+    title: 'Actualizar ingresos',
+    description: `Ingresos ${month} · ${numAmount.toFixed(2)} €`,
+    badge: `${numAmount.toFixed(2)} €`,
+    amount: numAmount,
+    timestamp: Date.now(),
+  }
+  savePushQueue([...filteredQueue, task])
+
+  return { success: true, summary: updatedSummary }
+}
+
+export function stageSetSavingsGoal(month, amount) {
+  const numAmount = parseFloat(String(amount).replace(',', '.')) || 0
+  const cachedSum = getCachedSummary(month) || {}
+
+  const inc = cachedSum.income || 0
+  const fixed = cachedSum.fixedExpenses || 0
+  const variable = cachedSum.variableExpenses || 0
+  const rem = inc - fixed - variable - numAmount
+
+  const updatedSummary = {
+    ...cachedSum,
+    month,
+    desiredSavings: numAmount,
+    remainingMonth: Math.round(rem * 100) / 100,
+    savings: Math.round(rem * 100) / 100,
+  }
+  setCacheEntry('summary_' + month, updatedSummary)
+
+  const queue = getPushQueue()
+  const targetId = `savings_${month}`
+  const filteredQueue = queue.filter((t) => t.id !== targetId)
+  const task = {
+    id: targetId,
+    action: 'setSavingsGoal',
+    month,
+    payload: { amount: numAmount },
+    title: 'Meta de ahorro',
+    description: `Objetivo ${month} · ${numAmount.toFixed(2)} €`,
+    badge: `${numAmount.toFixed(2)} €`,
+    amount: numAmount,
+    timestamp: Date.now(),
+  }
+  savePushQueue([...filteredQueue, task])
+
+  return { success: true, summary: updatedSummary }
+}
+
+export function stageAddIncome(month, category, amount) {
+  const cleanCat = String(category || '').trim() || 'Euromar'
+  const numAmt = parseFloat(String(amount).replace(',', '.')) || 0
+
+  const cachedSum = getCachedSummary(month) || {}
+  const newInc = (cachedSum.income || 0) + numAmt
+  const fixed = cachedSum.fixedExpenses || 0
+  const variable = cachedSum.variableExpenses || 0
+  const desiredSavings = cachedSum.desiredSavings || 0
+  const rem = newInc - fixed - variable - desiredSavings
+
+  const updatedSummary = {
+    ...cachedSum,
+    month,
+    income: Math.round(newInc * 100) / 100,
+    remainingMonth: Math.round(rem * 100) / 100,
+    savings: Math.round(rem * 100) / 100,
+  }
+  setCacheEntry('summary_' + month, updatedSummary)
+
+  const queue = getPushQueue()
+  const task = {
+    id: `add_inc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    action: 'addIncome',
+    month,
+    payload: { category: cleanCat, amount: numAmt },
+    title: 'Añadir ingreso',
+    description: `${cleanCat} · ${numAmt.toFixed(2)} € (${month})`,
+    badge: `+${numAmt.toFixed(2)} €`,
+    category: cleanCat,
+    amount: numAmt,
+    timestamp: Date.now(),
+  }
+  savePushQueue([...queue, task])
+
+  return { success: true, summary: updatedSummary }
+}
+
+/**
+ * Descarga de Google Sheets bajo petición (Pull on Demand)
+ */
+export async function pullMonthDataFromSheets(month) {
+  // Descargar getMonthData y getFixedExpenses en paralelo para asegurar todos los datos
+  const [dataResult, fixedResult] = await Promise.allSettled([
+    callApi({ action: 'getMonthData', month }),
+    callApi({ action: 'getFixedExpenses', month }),
+  ])
+
+  const data = dataResult.status === 'fulfilled' ? dataResult.value : {}
+  const fixedData = fixedResult.status === 'fulfilled' ? fixedResult.value : {}
+
+  // 1. Procesar y guardar gastos fijos
+  let fixedExpensesList = []
+  let totalFixed = 0
+  const rawFixed = (fixedData?.fixedExpenses && fixedData.fixedExpenses.length > 0)
+    ? fixedData.fixedExpenses
+    : (data?.fixedExpenses && data.fixedExpenses.length > 0 ? data.fixedExpenses : null)
+
+  if (rawFixed && Array.isArray(rawFixed)) {
+    fixedExpensesList = sanitizeAndMergeFixedExpenses([], rawFixed)
+    totalFixed = fixedExpensesList.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+    setCacheEntry('fixed_expenses_' + month, {
+      month,
+      fixedExpenses: fixedExpensesList,
+      totalActive: totalFixed,
+      hasCheckbox: fixedData?.hasCheckbox ?? data?.hasCheckbox ?? true,
+    })
+  } else {
+    const cachedFixed = getCachedFixedExpenses(month)
+    if (cachedFixed?.fixedExpenses && cachedFixed.fixedExpenses.length > 0) {
+      fixedExpensesList = cachedFixed.fixedExpenses
+      totalFixed = cachedFixed.totalActive || fixedExpensesList.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+    }
+  }
+
+  // 2. Procesar Gastos Variables
+  if (data?.expenses) {
+    setCacheEntry('expenses_' + month, { expenses: data.expenses, month, lastRow: data.lastRow })
+  }
+
+  // 3. Procesar Ingresos
+  if (data?.incomes) {
+    setCacheEntry('incomes_' + month, { incomes: data.incomes, month })
+  }
+
+  // 4. Consolidar Resumen
+  const baseSummary = data?.summary || fixedData?.summary || getCachedSummary(month) || {}
+  const income = baseSummary.income ?? baseSummary.totalIncome ?? 0
+  const variable = baseSummary.variableExpenses ?? baseSummary.variable ?? 0
+  const savingsGoal = baseSummary.desiredSavings || 0
+
+  // El total de gastos fijos: usar totalFixed si las casillas están activas, o baseSummary
+  const serverFixed = baseSummary.fixedExpenses ?? baseSummary.fixed ?? 0
+  const finalFixed = totalFixed > 0 ? totalFixed : serverFixed
+  const totalExp = Math.round((finalFixed + variable) * 100) / 100
+  const remaining = Math.round((income - totalExp - savingsGoal) * 100) / 100
+
+  const consolidatedSummary = {
+    ...baseSummary,
+    month,
+    income: Math.round(income * 100) / 100,
+    fixedExpenses: Math.round(finalFixed * 100) / 100,
+    variableExpenses: Math.round(variable * 100) / 100,
+    totalExpenses: totalExp,
+    desiredSavings: Math.round(savingsGoal * 100) / 100,
+    remainingMonth: remaining,
+    savings: remaining,
+  }
+
+  setCacheEntry('summary_' + month, consolidatedSummary)
+
+  return {
+    ...data,
+    summary: consolidatedSummary,
+    expenses: data?.expenses || [],
+    fixedExpenses: fixedExpensesList,
+    totalActiveFixed: finalFixed,
+  }
+}
+
+/**
+ * Ejecuta el Push de todas las tareas acumuladas en la pila a Google Sheets.
+ */
+export async function pushAllChanges(onProgress = null) {
+  const tasks = getPushQueue()
+  if (tasks.length === 0) {
+    return { success: true, count: 0, message: 'No hay cambios pendientes' }
+  }
+
+  // 1. Intento por lote rápido (Batch Push - Apps Script v3.6.0)
+  try {
+    const batchPayload = tasks.map((t) => ({
+      action: t.action,
+      month: t.month,
+      payload: t.payload,
+    }))
+
+    const batchRes = await callApi(
+      {
+        action: 'pushBatchChanges',
+        tasks: JSON.stringify(batchPayload),
+      },
+      'POST'
+    )
+
+    if (batchRes && (batchRes.success || batchRes.processed > 0)) {
+      if (batchRes.monthsData) {
+        Object.entries(batchRes.monthsData).forEach(([m, mData]) => {
+          if (mData?.summary) setCacheEntry('summary_' + m, mData.summary)
+          if (mData?.expenses) {
+            setCacheEntry('expenses_' + m, {
+              expenses: mData.expenses,
+              month: m,
+              lastRow: mData.lastRow,
+            })
+          }
+          if (mData?.fixedExpenses) {
+            const safeList = sanitizeAndMergeFixedExpenses([], mData.fixedExpenses)
+            const total = safeList.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+            setCacheEntry('fixed_expenses_' + m, {
+              month: m,
+              fixedExpenses: safeList,
+              totalActive: total,
+              hasCheckbox: mData.hasCheckbox ?? true,
+            })
+          }
+        })
+      }
+      clearPushQueue()
+      return { success: true, count: tasks.length }
+    }
+  } catch (batchErr) {
+    console.warn('Batch push falló o versión previa de Apps Script, procediendo secuencialmente:', batchErr.message)
+  }
+
+  // 2. Envío secuencial con notificación de progreso
+  let completed = 0
+  const failed = []
+
+  for (let i = 0; i < tasks.length; i++) {
+    const t = tasks[i]
+    onProgress?.({ current: i + 1, total: tasks.length, task: t })
+
+    try {
+      if (t.action === 'addExpense') {
+        await addExpenseDirect(t.month, t.payload.category, t.payload.amount)
+      } else if (t.action === 'updateExpense') {
+        await updateExpense(
+          t.month,
+          t.payload.row,
+          t.payload.oldCategory,
+          t.payload.oldAmount,
+          t.payload.newCategory,
+          t.payload.newAmount
+        )
+      } else if (t.action === 'deleteExpense') {
+        await deleteExpense(t.month, t.payload.row, t.payload.category, t.payload.amount)
+      } else if (t.action === 'setFixedExpenseStatus') {
+        await setFixedExpenseStatus(t.month, t.payload.row, t.payload.active)
+      } else if (t.action === 'setFixedExpenseAmount') {
+        await setFixedExpenseAmount(t.month, t.payload.row, t.payload.amount, t.payload.category)
+      } else if (t.action === 'setTotalIncome') {
+        await setTotalIncome(t.month, t.payload.amount, t.payload.category)
+      } else if (t.action === 'setSavingsGoal') {
+        await setSavingsGoal(t.month, t.payload.amount)
+      } else if (t.action === 'addIncome') {
+        await addIncomeDirect(t.month, t.payload.category, t.payload.amount)
+      }
+      completed++
+    } catch (taskErr) {
+      console.error('Error procesando tarea en push secuencial:', t, taskErr)
+      failed.push(t)
+    }
+  }
+
+  savePushQueue(failed)
+
+  if (failed.length > 0) {
+    throw new Error(`Se subieron ${completed} de ${tasks.length} cambios. ${failed.length} no pudieron guardarse.`)
+  }
+
+  return { success: true, count: completed }
+}
+
 export async function setSavingsGoal(month, amount) {
   const parsed = parseFloat(String(amount).replace(',', '.'))
   if (isNaN(parsed) || parsed < 0) throw new Error('Meta de ahorro no válida')
@@ -565,39 +1212,59 @@ export async function setTotalIncome(month, amount, category) {
   }
 }
 
+const inFlightAddExpenses = new Map()
+
 export async function addExpenseDirect(month, category, amount) {
   const cleanCategory = String(category || '').trim()
-  const result = await callApi({
-    action: 'addExpense',
-    month,
-    category: cleanCategory,
-    amount: String(amount),
-  })
+  const parsedAmt = parseFloat(String(amount).replace(',', '.'))
+  const key = `${month}_${cleanCategory.toLowerCase()}_${parsedAmt}`
 
-  if (result?.summary) {
-    setCacheEntry('summary_' + month, result.summary)
-  }
-  if (result?.expenses) {
-    setCacheEntry('expenses_' + month, { expenses: result.expenses, month, lastRow: result.lastRow })
-  }
-  if (result?.incomes) {
-    setCacheEntry('incomes_' + month, { incomes: result.incomes, month })
+  if (inFlightAddExpenses.has(key)) {
+    return inFlightAddExpenses.get(key)
   }
 
-  // Add the newly used category to the local cache immediately
-  if (cleanCategory) {
-    const cached = getCacheEntry('categories')
-    if (cached && Array.isArray(cached.categories)) {
-      if (!cached.categories.includes(cleanCategory)) {
-        setCacheEntry('categories', {
-          ...cached,
-          categories: [...cached.categories, cleanCategory],
-        })
+  const promise = (async () => {
+    try {
+      const result = await callApi({
+        action: 'addExpense',
+        month,
+        category: cleanCategory,
+        amount: String(parsedAmt),
+      })
+
+      if (result?.summary) {
+        setCacheEntry('summary_' + month, result.summary)
       }
-    }
-  }
+      if (result?.expenses) {
+        setCacheEntry('expenses_' + month, { expenses: result.expenses, month, lastRow: result.lastRow })
+      }
+      if (result?.incomes) {
+        setCacheEntry('incomes_' + month, { incomes: result.incomes, month })
+      }
 
-  return result
+      // Add the newly used category to the local cache immediately
+      if (cleanCategory) {
+        const cached = getCacheEntry('categories')
+        if (cached && Array.isArray(cached.categories)) {
+          if (!cached.categories.includes(cleanCategory)) {
+            setCacheEntry('categories', {
+              ...cached,
+              categories: [...cached.categories, cleanCategory],
+            })
+          }
+        }
+      }
+
+      return result
+    } finally {
+      setTimeout(() => {
+        inFlightAddExpenses.delete(key)
+      }, 1500)
+    }
+  })()
+
+  inFlightAddExpenses.set(key, promise)
+  return promise
 }
 
 export async function addIncomeDirect(month, category, amount) {
@@ -640,9 +1307,21 @@ export async function addIncomeDirect(month, category, amount) {
 
 export function addToPending(month, category, amount) {
   const pending = getPendingExpenses()
+  // Avoid duplicate insertion into pending queue
+  const cleanCat = String(category || '').trim()
+  const numAmt = parseFloat(String(amount).replace(',', '.')) || 0
+  const alreadyInPending = pending.some(
+    (p) =>
+      p.month === month &&
+      p.category.toLowerCase() === cleanCat.toLowerCase() &&
+      Math.abs((parseFloat(String(p.amount).replace(',', '.')) || 0) - numAmt) < 0.01 &&
+      Date.now() - p.createdAt < 30000
+  )
+  if (alreadyInPending) return
+
   pending.push({
     month,
-    category: String(category || '').trim(),
+    category: cleanCat,
     amount,
     id: Date.now() + Math.random(),
     createdAt: Date.now(),
@@ -660,21 +1339,41 @@ export function removePendingExpense(id) {
 }
 
 export async function updateExpense(month, row, oldCategory, oldAmount, newCategory, newAmount) {
+  const cleanNewCat = String(newCategory || '').trim()
+  const parsedNewAmt = parseFloat(String(newAmount).replace(',', '.'))
+
+  // Optimistic update of local cache
+  const cachedExp = getCachedExpenses(month)
+  if (cachedExp?.expenses) {
+    const updatedExpenses = cachedExp.expenses.map((e) =>
+      e.row === row ? { ...e, category: cleanNewCat, amount: parsedNewAmt } : e
+    )
+    setCacheEntry('expenses_' + month, { ...cachedExp, expenses: updatedExpenses })
+  }
+
   const result = await callApi({
     action: 'updateExpense',
     month,
     row: String(row),
     oldCategory: String(oldCategory || '').trim(),
     oldAmount: String(oldAmount),
-    newCategory: String(newCategory || '').trim(),
-    newAmount: String(newAmount),
+    newCategory: cleanNewCat,
+    newAmount: String(parsedNewAmt),
   })
+
   if (result?.summary) setCacheEntry('summary_' + month, result.summary)
-  if (result?.expenses) setCacheEntry('expenses_' + month, { expenses: result.expenses, month })
+  if (result?.expenses) setCacheEntry('expenses_' + month, { expenses: result.expenses, month, lastRow: result.lastRow })
   return result
 }
 
 export async function deleteExpense(month, row, category, amount) {
+  // Optimistic update of local cache
+  const cachedExp = getCachedExpenses(month)
+  if (cachedExp?.expenses) {
+    const updatedExpenses = cachedExp.expenses.filter((e) => e.row !== row)
+    setCacheEntry('expenses_' + month, { ...cachedExp, expenses: updatedExpenses })
+  }
+
   const result = await callApi({
     action: 'deleteExpense',
     month,
@@ -682,8 +1381,9 @@ export async function deleteExpense(month, row, category, amount) {
     category: String(category || '').trim(),
     amount: String(amount),
   })
+
   if (result?.summary) setCacheEntry('summary_' + month, result.summary)
-  if (result?.expenses) setCacheEntry('expenses_' + month, { expenses: result.expenses, month })
+  if (result?.expenses) setCacheEntry('expenses_' + month, { expenses: result.expenses, month, lastRow: result.lastRow })
   return result
 }
 
@@ -771,6 +1471,17 @@ export const FIXED_DEFAULT_AMOUNTS = {
   21: 0,
 }
 
+function parseActiveBoolean(val, fallback = false) {
+  if (val === true || val === 1 || val === '1') return true
+  if (val === false || val === 0 || val === '0') return false
+  if (typeof val === 'string') {
+    const s = val.trim().toLowerCase()
+    if (['true', 'verdadero', 'v', 'si', 'sí', 'yes', 'y', 'checked', 'ok', 'x', '1'].includes(s)) return true
+    if (['false', 'falso', 'f', 'no', 'unchecked', '0', ''].includes(s)) return false
+  }
+  return fallback
+}
+
 /**
  * Fusiona de forma infalible la lista de gastos fijos para evitar:
  * 1. Que se oculten los gastos desmarcados.
@@ -789,7 +1500,7 @@ export function sanitizeAndMergeFixedExpenses(existingItems = [], incomingItems 
         cat = FIXED_DEFAULT_CATEGORIES[it.row] || `Gasto Fijo #${it.row - 12}`
       }
       let amt = (it.amount !== undefined && it.amount !== null && !isNaN(it.amount)) ? it.amount : (FIXED_DEFAULT_AMOUNTS[it.row] || 0)
-      mapByRow.set(it.row, { ...it, category: cat, amount: amt })
+      mapByRow.set(it.row, { ...it, category: cat, amount: amt, active: parseActiveBoolean(it.active, false) })
     })
   }
 
@@ -821,10 +1532,18 @@ export function sanitizeAndMergeFixedExpenses(existingItems = [], incomingItems 
         safeAmt = existing?.amount > 0 ? existing.amount : (FIXED_DEFAULT_AMOUNTS[inc.row] || 0)
       }
 
+      const rawActive = inc.active !== undefined
+        ? inc.active
+        : (inc.checked !== undefined ? inc.checked : (inc.isChecked !== undefined ? inc.isChecked : inc.status))
+      
+      const isActive = rawActive !== undefined
+        ? parseActiveBoolean(rawActive, existing?.active ?? false)
+        : (existing?.active ?? false)
+
       if (existing) {
         mapByRow.set(inc.row, {
           ...existing,
-          active: inc.active !== undefined ? inc.active : existing.active,
+          active: isActive,
           amount: safeAmt,
           category: safeCat,
           hasCheckbox: inc.hasCheckbox !== undefined ? inc.hasCheckbox : existing.hasCheckbox,
@@ -834,7 +1553,7 @@ export function sanitizeAndMergeFixedExpenses(existingItems = [], incomingItems 
           row: inc.row,
           category: safeCat,
           amount: safeAmt,
-          active: !!inc.active,
+          active: isActive,
           hasCheckbox: inc.hasCheckbox ?? true,
         })
       }
@@ -865,8 +1584,8 @@ export async function getFixedExpenses(month) {
     const existingList = cached?.fixedExpenses || []
 
     let safeList = existingList
-    if (data && Array.isArray(data.fixedExpenses)) {
-      safeList = sanitizeAndMergeFixedExpenses(existingList, data.fixedExpenses)
+    if (data && Array.isArray(data.fixedExpenses) && data.fixedExpenses.length > 0) {
+      safeList = sanitizeAndMergeFixedExpenses([], data.fixedExpenses)
     } else if (existingList.length === 0) {
       safeList = sanitizeAndMergeFixedExpenses([], [])
     }
@@ -879,6 +1598,26 @@ export async function getFixedExpenses(month) {
       hasCheckbox: data?.hasCheckbox ?? true,
     }
     setCacheEntry('fixed_expenses_' + month, safeData)
+
+    // Actualizar también el resumen mensual en caché
+    const cachedSummary = getCachedSummary(month)
+    if (cachedSummary) {
+      const varExp = cachedSummary.variableExpenses || 0
+      const inc = cachedSummary.income || 0
+      const sav = cachedSummary.desiredSavings || 0
+      const newTotalExp = Math.round((total + varExp) * 100) / 100
+      const newRem = Math.round((inc - newTotalExp - sav) * 100) / 100
+      const updatedSummary = {
+        ...cachedSummary,
+        fixedExpenses: total,
+        totalExpenses: newTotalExp,
+        remainingMonth: newRem,
+        savings: newRem,
+      }
+      setCacheEntry('summary_' + month, updatedSummary)
+      safeData.summary = updatedSummary
+    }
+
     return safeData
   } catch (err) {
     const cached = getCachedFixedExpenses(month)
