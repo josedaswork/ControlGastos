@@ -30,7 +30,6 @@ import {
   updateExpense as apiUpdateExpense,
   deleteExpense as apiDeleteExpense,
   setTotalIncome as apiSetTotalIncome,
-  setSavingsGoal as apiSetSavingsGoal,
   syncPendingExpenses,
   getPendingForMonth,
   getPendingExpenses,
@@ -46,11 +45,14 @@ import {
   subscribePushQueue,
   pushAllChanges,
   pullMonthDataFromSheets,
+  fullSyncFromSheets,
   stageAddExpense,
   stageUpdateExpense,
   stageDeleteExpense,
   stageSetTotalIncome,
   stageSetSavingsGoal,
+  stageSetMonthFinalized,
+  getMonthFinalizedStatuses,
   stageAddIncome,
 } from '@/lib/sheetsApi'
 import { isDebugEnabled, subscribeLogs } from '@/lib/debugLogger'
@@ -108,6 +110,7 @@ function App() {
   const queueRef = useRef([])
   const processingRef = useRef(false)
   const loadIdRef = useRef(0)
+  const initialFinalizedSyncRef = useRef(null)
 
   useEffect(() => {
     const unsub = subscribePushQueue((q) => {
@@ -127,8 +130,32 @@ function App() {
 
   const monthName = MONTHS[selectedMonth]
 
+  const applyDownloadedMonthStatus = (monthData) => {
+    if (!monthData || typeof monthData.monthFinalized !== 'boolean') return
+    const monthIndex = MONTHS.indexOf(monthData.month || monthName)
+    if (monthIndex < 0) return
+    setFinalizedMonths(setMonthFinalized(monthIndex, monthData.monthFinalized))
+    setEffectiveCurrentMonth(getEffectiveCurrentMonth())
+  }
+
+  const loadAllFinalizedMonthsFromSheets = async () => {
+    const statuses = await getMonthFinalizedStatuses()
+    let updated = getFinalizedMonths()
+    Object.entries(statuses).forEach(([month, finalized]) => {
+      const index = MONTHS.indexOf(month)
+      if (index >= 0) updated = setMonthFinalized(index, Boolean(finalized))
+    })
+    setFinalizedMonths(updated)
+    setEffectiveCurrentMonth(getEffectiveCurrentMonth())
+  }
+
   const loadData = useCallback(async (force = false) => {
     if (!scriptUrl) return
+
+    if (initialFinalizedSyncRef.current) {
+      await initialFinalizedSyncRef.current
+      initialFinalizedSyncRef.current = null
+    }
 
     const currentLoadId = ++loadIdRef.current
 
@@ -185,17 +212,26 @@ function App() {
       return
     }
 
-    // Solo si no hay datos en caché en absoluto para este mes, intentamos una carga inicial
+    // Solo si no hay datos en caché, cargamos el mes actual y las categorías.
     setLoading(true)
     try {
-      const monthData = await getMonthData(monthName, null)
+      const [monthResult, categoriesResult] = await Promise.allSettled([
+        pullMonthDataFromSheets(monthName),
+        fetchCategories(),
+      ])
       if (currentLoadId !== loadIdRef.current) return
 
-      if (monthData?.summary) {
-        setSummary(monthData.summary)
+      const freshSummary = getCachedSummary(monthName)
+      const freshExpenses = getCachedExpenses(monthName)
+      if (monthResult.status === 'fulfilled') applyDownloadedMonthStatus(monthResult.value)
+      if (freshSummary) setSummary(freshSummary)
+      if (freshExpenses?.expenses) setExpenses(freshExpenses.expenses)
+      if (categoriesResult.status === 'fulfilled') {
+        const freshCategories = categoriesResult.value
+        if (freshCategories?.categories?.length > 0) setCategories(freshCategories.categories)
+        if (freshCategories?.incomeCategories?.length > 0) setIncomeCategories(freshCategories.incomeCategories)
       }
-      const serverExpenses = monthData?.expenses || []
-      setExpenses(serverExpenses)
+      if (monthResult.status === 'rejected') throw monthResult.reason
       setIsUsingCache(false)
     } catch (err) {
       if (currentLoadId !== loadIdRef.current) return
@@ -204,6 +240,34 @@ function App() {
       if (currentLoadId === loadIdRef.current) setLoading(false)
     }
   }, [scriptUrl, monthName])
+
+  const handleFullSync = async (targetUrl = null) => {
+    if (pulling) return
+    const effectiveUrl = targetUrl || scriptUrl
+    if (!effectiveUrl) return
+
+    setPulling(true)
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+    const toastId = toast.loading(`Descargando TODO desde Excel (${monthName}, meses colindantes, casillas y Panel de Control)...`)
+    try {
+      const syncResult = await fullSyncFromSheets(monthName)
+      applyDownloadedMonthStatus(syncResult?.monthData)
+      const freshSummary = getCachedSummary(monthName)
+      const freshExpenses = getCachedExpenses(monthName)
+      if (freshSummary) setSummary(freshSummary)
+      if (freshExpenses?.expenses) setExpenses(freshExpenses.expenses)
+      setIsUsingCache(false)
+      const cachedCategories = getCachedCategories()
+      if (cachedCategories?.categories?.length > 0) setCategories(cachedCategories.categories)
+      if (cachedCategories?.incomeCategories?.length > 0) setIncomeCategories(cachedCategories.incomeCategories)
+      Haptics.notification({ type: 'success' }).catch(() => {})
+      toast.success(`¡Descargado TODO con éxito! (${monthName}, meses colindantes, casillas y Panel de Control)`, { id: toastId })
+    } catch (err) {
+      toast.error('Error al descargar del Excel: ' + err.message, { id: toastId })
+    } finally {
+      setPulling(false)
+    }
+  }
 
   const handlePullMonthData = async (forceBypass = false) => {
     if (pulling || !scriptUrl) return
@@ -217,13 +281,16 @@ function App() {
 
     setPulling(true)
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
-    const toastId = toast.loading(`Descargando datos de ${monthName} desde Excel...`)
+    const toastId = toast.loading(`Descargando ${monthName} desde Excel...`)
     try {
-      const data = await pullMonthDataFromSheets(monthName)
-      if (data?.summary) setSummary(data.summary)
-      if (data?.expenses) setExpenses(data.expenses)
-      Haptics.notification({ type: 'success' }).catch(() => {})
-      toast.success(`Datos de ${monthName} descargados de Google Sheets`, { id: toastId })
+      const result = await pullMonthDataFromSheets(monthName)
+      applyDownloadedMonthStatus(result)
+      const freshSummary = result?.summary || getCachedSummary(monthName)
+      const freshExpenses = result?.expenses || getCachedExpenses(monthName)?.expenses
+      if (freshSummary) setSummary(freshSummary)
+      if (freshExpenses) setExpenses(freshExpenses)
+      setIsUsingCache(false)
+      toast.success(`¡${monthName} descargado correctamente!`, { id: toastId })
     } catch (err) {
       toast.error('Error al descargar del Excel: ' + err.message, { id: toastId })
     } finally {
@@ -276,7 +343,6 @@ function App() {
     }
   }, [scriptUrl])
 
-  useEffect(() => { loadCategories() }, [loadCategories])
   useEffect(() => { loadData() }, [loadData])
 
   const handleOpenAddModal = () => {
@@ -401,6 +467,15 @@ function App() {
     setScriptUrl(cleanUrl)
     setSpreadsheetUrl(getSpreadsheetUrl())
     setShowSetup(false)
+
+    // Leer primero los estados FINALIZADO de todos los meses y después sincronizar.
+    initialFinalizedSyncRef.current = loadAllFinalizedMonthsFromSheets().catch((err) => {
+      console.warn('No se pudieron leer los estados FINALIZADO:', err.message)
+    })
+    setTimeout(async () => {
+      await initialFinalizedSyncRef.current
+      handleFullSync(cleanUrl)
+    }, 150)
   }
 
   const handleToggleFinalizeMonth = (monthIdx, shouldFinalize) => {
@@ -408,6 +483,8 @@ function App() {
     setFinalizedMonths(updated)
     const newEffective = getEffectiveCurrentMonth()
     setEffectiveCurrentMonth(newEffective)
+
+    stageSetMonthFinalized(MONTHS[monthIdx], shouldFinalize)
 
     if (shouldFinalize) {
       const nextIdx = (monthIdx + 1) % 12
@@ -547,14 +624,14 @@ function App() {
               )}
             </motion.button>
 
-            {/* Pull Button (Descargar datos del mes de Google Sheets bajo petición) */}
+            {/* Pull Button (Descargar TODO de Google Sheets bajo petición) */}
             <motion.button
               type="button"
               onClick={() => handlePullMonthData(false)}
               disabled={loading || pulling}
               whileTap={{ scale: 0.88 }}
-              aria-label="Descargar datos de Excel para este mes"
-              title={`Descargar datos de ${monthName} desde Google Sheets bajo petición`}
+              aria-label="Descargar TODO del Excel"
+              title={`Descargar TODO del Excel (${monthName}, meses colindantes, casillas y Panel de Control)`}
               className="relative w-10 h-10 rounded-2xl bg-white border border-slate-200/80 shadow-xs hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors disabled:opacity-50"
             >
               <Download className={`h-4.5 w-4.5 ${pulling ? 'animate-bounce text-primary' : ''}`} />

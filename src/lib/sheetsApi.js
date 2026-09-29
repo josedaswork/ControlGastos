@@ -53,6 +53,15 @@ export { isDebugEnabled, logTask, startTask } from './debugLogger'
 
 export const DEFAULT_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1KLn5Ow_eoclIyx2LB0P89JC7vwmNSRV60iBjNepoJjA/edit'
 
+export const ALL_MONTHS = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+]
+export const ALL_SHORT_MONTHS = [
+  'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+  'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'
+]
+
 export function normalizeScriptUrl(inputUrl) {
   if (!inputUrl || typeof inputUrl !== 'string') return ''
   let url = inputUrl.trim()
@@ -890,6 +899,29 @@ export function stageSetSavingsGoal(month, amount) {
   return { success: true, summary: updatedSummary }
 }
 
+export function stageSetMonthFinalized(month, finalized) {
+  const queue = getPushQueue()
+  const targetId = `month_status_${month}`
+  const filteredQueue = queue.filter((t) => t.id !== targetId)
+  const task = {
+    id: targetId,
+    action: 'setMonthFinalized',
+    month,
+    payload: { finalized: Boolean(finalized) },
+    title: finalized ? 'Finalizar mes' : 'Reabrir mes',
+    description: `${month} · ${finalized ? 'Finalizado' : 'Reabierto'}`,
+    badge: finalized ? 'Finalizado' : 'Reabierto',
+    timestamp: Date.now(),
+  }
+  savePushQueue([...filteredQueue, task])
+  return { success: true }
+}
+
+export async function getMonthFinalizedStatuses() {
+  const result = await callApi({ action: 'getMonthFinalizedStatuses' })
+  return result?.statuses || {}
+}
+
 export function stageAddIncome(month, category, amount) {
   const cleanCat = String(category || '').trim() || 'Euromar'
   const numAmt = parseFloat(String(amount).replace(',', '.')) || 0
@@ -932,14 +964,9 @@ export function stageAddIncome(month, category, amount) {
  * Descarga de Google Sheets bajo petición (Pull on Demand)
  */
 export async function pullMonthDataFromSheets(month) {
-  // Descargar getMonthData y getFixedExpenses en paralelo para asegurar todos los datos
-  const [dataResult, fixedResult] = await Promise.allSettled([
-    callApi({ action: 'getMonthData', month }),
-    callApi({ action: 'getFixedExpenses', month }),
-  ])
-
-  const data = dataResult.status === 'fulfilled' ? dataResult.value : {}
-  const fixedData = fixedResult.status === 'fulfilled' ? fixedResult.value : {}
+  // getMonthData ya incluye gastos fijos; evitar una segunda lectura completa de la hoja.
+  const data = await callApi({ action: 'getMonthData', month })
+  const fixedData = data
 
   // 1. Procesar y guardar gastos fijos
   let fixedExpensesList = []
@@ -1035,7 +1062,7 @@ export async function pushAllChanges(onProgress = null) {
       'POST'
     )
 
-    if (batchRes && (batchRes.success || batchRes.processed > 0)) {
+    if (batchRes && batchRes.success === true && batchRes.processed >= tasks.length) {
       if (batchRes.monthsData) {
         Object.entries(batchRes.monthsData).forEach(([m, mData]) => {
           if (mData?.summary) setCacheEntry('summary_' + m, mData.summary)
@@ -1066,12 +1093,54 @@ export async function pushAllChanges(onProgress = null) {
   }
 
   // 2. Envío secuencial con notificación de progreso
+  // Si el lote se aplicó pero se perdió la respuesta, no repetir altas ya visibles.
+  // Esto evita duplicados por timeout o cortes de red después de escribir en Sheets.
+  let tasksToSend = tasks
+  try {
+    const addTasks = tasks.filter((task) => task.action === 'addExpense')
+    const months = [...new Set(addTasks.map((task) => task.month))]
+    const serverCounts = {}
+    const baselineCounts = {}
+    tasks.forEach((task) => {
+      if (task.action !== 'addExpense') return
+      const cached = getCachedExpenses(task.month)
+      ;(cached?.expenses || []).filter((expense) => !expense.isLocal).forEach((expense) => {
+        const key = `${task.month}|${String(expense.category || '').trim().toLowerCase()}|${Number(expense.amount || 0).toFixed(2)}`
+        baselineCounts[key] = (baselineCounts[key] || 0) + 1
+      })
+    })
+    for (const month of months) {
+      const data = await callApi({ action: 'getMonthData', month })
+      ;(data.expenses || []).forEach((expense) => {
+        const key = `${month}|${String(expense.category || '').trim().toLowerCase()}|${Number(expense.amount || 0).toFixed(2)}`
+        serverCounts[key] = (serverCounts[key] || 0) + 1
+      })
+    }
+
+    const consumed = {}
+    tasksToSend = tasks.filter((task) => {
+      if (task.action !== 'addExpense') return true
+      const key = `${task.month}|${String(task.payload?.category || '').trim().toLowerCase()}|${Number(task.payload?.amount || 0).toFixed(2)}`
+      const alreadyAvailable = Math.max(0, (serverCounts[key] || 0) - (baselineCounts[key] || 0))
+      const alreadyConsumed = consumed[key] || 0
+      if (alreadyConsumed < alreadyAvailable) {
+        consumed[key] = alreadyConsumed + 1
+        return false
+      }
+      consumed[key] = alreadyConsumed + 1
+      return true
+    })
+  } catch (reconcileErr) {
+    console.warn('No se pudo reconciliar el lote antes del fallback:', reconcileErr.message)
+    tasksToSend = tasks
+  }
+
   let completed = 0
   const failed = []
 
-  for (let i = 0; i < tasks.length; i++) {
-    const t = tasks[i]
-    onProgress?.({ current: i + 1, total: tasks.length, task: t })
+  for (let i = 0; i < tasksToSend.length; i++) {
+    const t = tasksToSend[i]
+    onProgress?.({ current: i + 1, total: tasksToSend.length, task: t })
 
     try {
       if (t.action === 'addExpense') {
@@ -1095,6 +1164,12 @@ export async function pushAllChanges(onProgress = null) {
         await setTotalIncome(t.month, t.payload.amount, t.payload.category)
       } else if (t.action === 'setSavingsGoal') {
         await setSavingsGoal(t.month, t.payload.amount)
+      } else if (t.action === 'setMonthFinalized') {
+        await callApi({
+          action: 'setMonthFinalized',
+          month: t.month,
+          finalized: t.payload.finalized ? 'true' : 'false',
+        })
       } else if (t.action === 'addIncome') {
         await addIncomeDirect(t.month, t.payload.category, t.payload.amount)
       }
@@ -1108,10 +1183,10 @@ export async function pushAllChanges(onProgress = null) {
   savePushQueue(failed)
 
   if (failed.length > 0) {
-    throw new Error(`Se subieron ${completed} de ${tasks.length} cambios. ${failed.length} no pudieron guardarse.`)
+    throw new Error(`Se subieron ${completed} de ${tasksToSend.length} cambios. ${failed.length} no pudieron guardarse.`)
   }
 
-  return { success: true, count: completed }
+  return { success: true, count: tasks.length }
 }
 
 export async function setSavingsGoal(month, amount) {
@@ -1626,6 +1701,163 @@ export async function getFixedExpenses(month) {
   }
 }
 
+/**
+ * Guarda los datos de un mes completo en el almacenamiento local:
+ * Gastos fijos con casillas, gastos variables, ingresos y resumen mensual consolidado.
+ */
+export function saveSingleMonthDataToCache(month, data) {
+  if (!data || data.error) return null
+
+  // 1. Gastos fijos con estado exacto de casillas (active: true / false)
+  let fixedExpensesList = []
+  let totalFixed = 0
+  if (data.fixedExpenses && Array.isArray(data.fixedExpenses) && data.fixedExpenses.length > 0) {
+    fixedExpensesList = sanitizeAndMergeFixedExpenses([], data.fixedExpenses)
+    totalFixed = fixedExpensesList.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+    setCacheEntry('fixed_expenses_' + month, {
+      month,
+      fixedExpenses: fixedExpensesList,
+      totalActive: totalFixed,
+      hasCheckbox: data.hasCheckbox ?? true,
+    })
+  } else {
+    const cachedFixed = getCachedFixedExpenses(month)
+    if (cachedFixed?.fixedExpenses && cachedFixed.fixedExpenses.length > 0) {
+      fixedExpensesList = cachedFixed.fixedExpenses
+      totalFixed = cachedFixed.totalActive || fixedExpensesList.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+    }
+  }
+
+  // 2. Gastos Variables
+  if (data.expenses && Array.isArray(data.expenses)) {
+    setCacheEntry('expenses_' + month, {
+      expenses: data.expenses,
+      month,
+      lastRow: data.lastRow || 22,
+    })
+  }
+
+  // 3. Ingresos
+  if (data.incomes && Array.isArray(data.incomes)) {
+    setCacheEntry('incomes_' + month, {
+      incomes: data.incomes,
+      month,
+    })
+  }
+
+  // 4. Resumen consolidado
+  const baseSummary = data.summary || {}
+  const income = baseSummary.income ?? baseSummary.totalIncome ?? 0
+  const variable = baseSummary.variableExpenses ?? baseSummary.variable ?? 0
+  const savingsGoal = baseSummary.desiredSavings || 0
+  const serverFixed = baseSummary.fixedExpenses ?? baseSummary.fixed ?? 0
+  const finalFixed = totalFixed > 0 ? totalFixed : serverFixed
+  const totalExp = Math.round((finalFixed + variable) * 100) / 100
+  const remaining = Math.round((income - totalExp - savingsGoal) * 100) / 100
+
+  const consolidatedSummary = {
+    ...baseSummary,
+    month,
+    income: Math.round(income * 100) / 100,
+    fixedExpenses: Math.round(finalFixed * 100) / 100,
+    variableExpenses: Math.round(variable * 100) / 100,
+    totalExpenses: totalExp,
+    desiredSavings: Math.round(savingsGoal * 100) / 100,
+    remainingMonth: remaining,
+    savings: remaining,
+  }
+  setCacheEntry('summary_' + month, consolidatedSummary)
+
+  return {
+    summary: consolidatedSummary,
+    expenses: data.expenses || [],
+    fixedExpenses: fixedExpensesList,
+    incomes: data.incomes || [],
+    totalActiveFixed: finalFixed,
+    hasCheckbox: data.hasCheckbox ?? true,
+  }
+}
+
+/**
+ * Sincronización Total bajo petición (Pull Completo de Todo el Spreadsheet):
+ * Descarga en 1 sola llamada rápida de ultra alto rendimiento:
+ * 1. El mes actual (gastos variables, fijos con casillas, ingresos y resumen).
+ * 2. Meses colindantes (mes anterior y siguiente con todos sus datos y casillas).
+ * 3. Datos de las pestañas de PANEL DE CONTROL ('Data gráficos', 'Panel de control', 'Plan de ahorro').
+ * 4. Categorías de gastos e ingresos.
+ */
+export async function fullSyncFromSheets(targetMonth) {
+  const normMonth = targetMonth || 'Septiembre'
+
+  // Intento 1: Llamada rápida unificada v4.0.0 (getFullSyncData)
+  try {
+    const res = await callApi({
+      action: 'getFullSyncData',
+      month: normMonth,
+    })
+
+    if (res && res.success && res.monthData) {
+      // 1. Guardar mes actual
+      saveSingleMonthDataToCache(normMonth, res.monthData)
+
+      // 2. Guardar meses colindantes
+      if (res.colindantMonths && typeof res.colindantMonths === 'object') {
+        Object.entries(res.colindantMonths).forEach(([mName, mData]) => {
+          if (mData && !mData.error) {
+            saveSingleMonthDataToCache(mName, mData)
+          }
+        })
+      }
+
+      // 3. Guardar Panel de Control
+      if (res.controlPanel && res.controlPanel.success) {
+        setCacheEntry('control_panel_data', res.controlPanel)
+      }
+
+      // 4. Guardar Categorías
+      if (res.categories && (res.categories.categories?.length > 0 || res.categories.incomeCategories?.length > 0)) {
+        setCacheEntry('categories', res.categories)
+      }
+
+      return {
+        success: true,
+        month: normMonth,
+        monthData: res.monthData,
+        colindantMonths: res.colindantMonths,
+        controlPanel: res.controlPanel,
+        categories: res.categories,
+      }
+    }
+  } catch (syncErr) {
+    console.warn('Llamada unificada getFullSyncData no disponible en versión remota, ejecutando descarga paralela modular:', syncErr.message)
+  }
+
+  // Fallback transparente: Descarga concurrente de mes actual, colindantes, panel de control y categorías
+  const targetIdx = ALL_MONTHS.indexOf(normMonth) !== -1 ? ALL_MONTHS.indexOf(normMonth) : 8
+  const prevMonth = ALL_MONTHS[(targetIdx - 1 + 12) % 12]
+  const nextMonth = ALL_MONTHS[(targetIdx + 1) % 12]
+
+  const [mainRes, prevRes, nextRes, cpRes, catRes] = await Promise.allSettled([
+    pullMonthDataFromSheets(normMonth),
+    pullMonthDataFromSheets(prevMonth),
+    pullMonthDataFromSheets(nextMonth),
+    getControlPanelData(true),
+    getCategories(),
+  ])
+
+  return {
+    success: true,
+    month: normMonth,
+    monthData: mainRes.status === 'fulfilled' ? mainRes.value : null,
+    colindantMonths: {
+      [prevMonth]: prevRes.status === 'fulfilled' ? prevRes.value : null,
+      [nextMonth]: nextRes.status === 'fulfilled' ? nextRes.value : null,
+    },
+    controlPanel: cpRes.status === 'fulfilled' ? cpRes.value : null,
+    categories: catRes.status === 'fulfilled' ? catRes.value : null,
+  }
+}
+
 export async function setFixedExpenseStatus(month, row, active) {
   const cachedFixed = getCachedFixedExpenses(month)
   const currentList = cachedFixed?.fixedExpenses || []
@@ -1828,16 +2060,6 @@ export async function repairFixedExpenseFormulas(month, forceAll = true) {
 
   return result
 }
-
-// Meses del año para agregación y mapeo
-const ALL_MONTHS = [
-  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-]
-const ALL_SHORT_MONTHS = [
-  'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
-  'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'
-]
 
 // Datos semilla de fallback basados en la plantilla del Panel de Control 2026
 const DEFAULT_CONTROL_PANEL_DATA = {
