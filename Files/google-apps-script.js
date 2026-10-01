@@ -736,35 +736,65 @@ function getControlPanelData(ss) {
 
 function getCategories(ss) {
   var ws = findSheet(ss, '(Categorías)') || findSheet(ss, 'Categorías');
-  var defaultExpenseCats = [
-    'Supermercado', 'Comida Base', 'Cafetería', 'Gimnasio', 'Alquiler',
-    'Bono metro', 'Disney', 'Spotify', 'Amazon', 'Viajes tickets',
-    'Capricho', 'Farmacia', 'Restaurantes', 'Gasolina', 'Ropa', 'Otros'
-  ];
-  var defaultIncomeCats = ['Euromar', 'Euromar Extra', 'Bizzum Tarjeta Rest', 'Bizz', 'Nómina', 'Extra'];
-
-  if (!ws) return { categories: defaultExpenseCats, incomeCategories: defaultIncomeCats };
+  if (!ws) return { categories: [], incomeCategories: [] };
 
   var cats = [];
   var incCats = [];
-  try {
-    // Lee desde la fila 2 hasta la fila MAX_CELLS (60): 59 filas × 3 columnas
-    var maxR = capCells(ws.getLastRow());
-    if (maxR >= 2) {
-      var vals = ws.getRange(2, 1, maxR - 1, 3).getValues();
-      for (var i = 0; i < vals.length; i++) {
-        var c = String(vals[i][0] || '').trim();
-        if (c && cats.indexOf(c) === -1) cats.push(c);
 
-        var inc = String(vals[i][2] || '').trim();
-        if (inc && incCats.indexOf(inc) === -1) incCats.push(inc);
+  try {
+    // Leemos un rango amplio de la pestaña (Categorías): 150 filas × 10 columnas
+    var totalRows = Math.min(Math.max(ws.getLastRow(), 50), 150);
+    var matrix = ws.getRange(1, 1, totalRows, 10).getValues();
+
+    var varCol = -1;
+    var incCol = -1;
+
+    // Buscar cabeceras en las primeras 5 filas
+    for (var r = 0; r < Math.min(5, matrix.length); r++) {
+      for (var c = 0; c < matrix[r].length; c++) {
+        var h = normalizeStr(matrix[r][c]);
+        if ((h.indexOf('variable') !== -1 || h.indexOf('gasto') !== -1) && h.indexOf('fijo') === -1 && varCol === -1) {
+          varCol = c;
+        }
+        if (h.indexOf('ingreso') !== -1 && incCol === -1) {
+          incCol = c;
+        }
       }
     }
-  } catch (_) {}
+
+    // Estructura oficial del Excel Control Dinero 2026:
+    // Col B (índice 1) = Ingresos, Col F (índice 5) = Gastos Variables
+    if (varCol === -1) varCol = 5; // Columna F
+    if (incCol === -1) incCol = 1; // Columna B
+
+    // Extraer todas las categorías de Gastos Variables directamente de la hoja
+    for (var i = 0; i < matrix.length; i++) {
+      var val = String(matrix[i][varCol] || '').trim();
+      var norm = normalizeStr(val);
+      if (val && norm !== 'gastos variables' && norm !== 'variable' && norm !== 'gastos' && norm !== 'categoria' && norm !== 'categorias') {
+        if (cats.indexOf(val) === -1) {
+          cats.push(val);
+        }
+      }
+    }
+
+    // Extraer todas las categorías de Ingresos directamente de la hoja
+    for (var j = 0; j < matrix.length; j++) {
+      var incVal = String(matrix[j][incCol] || '').trim();
+      var incNorm = normalizeStr(incVal);
+      if (incVal && incNorm !== 'ingresos' && incNorm !== 'ingreso' && incNorm !== 'categoria' && incNorm !== 'categorias') {
+        if (incCats.indexOf(incVal) === -1) {
+          incCats.push(incVal);
+        }
+      }
+    }
+  } catch (err) {
+    return { error: 'Error leyendo (Categorías): ' + err.toString(), categories: [], incomeCategories: [] };
+  }
 
   return {
-    categories: cats.length > 0 ? cats : defaultExpenseCats,
-    incomeCategories: incCats.length > 0 ? incCats : defaultIncomeCats
+    categories: cats,
+    incomeCategories: incCats
   };
 }
 

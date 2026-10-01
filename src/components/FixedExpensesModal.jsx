@@ -208,15 +208,16 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overscroll-contain">
       {/* Backdrop */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={{ duration: 0.2 }}
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs"
+        className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs touch-none overscroll-none"
         onClick={onClose}
+        onTouchMove={(e) => e.preventDefault()}
       />
 
       {/* Modal / Bottom Sheet */}
@@ -225,7 +226,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: '100%', opacity: 0.9 }}
         transition={{ type: 'spring', damping: 28, stiffness: 320 }}
-        className="relative z-10 w-full max-w-lg rounded-t-3xl sm:rounded-3xl bg-white border border-slate-200/90 shadow-2xl p-5 pb-8 sm:p-6 space-y-4 max-h-[85vh] flex flex-col"
+        className="relative z-10 w-full max-w-lg rounded-t-3xl sm:rounded-3xl bg-white border border-slate-200/90 shadow-2xl p-5 pb-8 sm:p-6 space-y-4 max-h-[85vh] flex flex-col overscroll-contain"
       >
         {/* Mobile handle */}
         <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto sm:hidden -mt-1 mb-1" />

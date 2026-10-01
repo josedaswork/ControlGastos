@@ -33,7 +33,6 @@ import {
   syncPendingExpenses,
   getPendingForMonth,
   getPendingExpenses,
-  DEFAULT_CATEGORIES,
   clearAllCache,
   getCachedSummary,
   getCachedExpenses,
@@ -54,6 +53,7 @@ import {
   stageSetMonthFinalized,
   getMonthFinalizedStatuses,
   stageAddIncome,
+  recordCategoryUsage,
 } from '@/lib/sheetsApi'
 import { isDebugEnabled, subscribeLogs } from '@/lib/debugLogger'
 import MonthSelector from '@/components/MonthSelector'
@@ -86,8 +86,8 @@ function App() {
   const [finalizeModalMonth, setFinalizeModalMonth] = useState(null)
   const [summary, setSummary] = useState(null)
   const [expenses, setExpenses] = useState([])
-  const [categories, setCategories] = useState([])
-  const [incomeCategories, setIncomeCategories] = useState(() => getCachedIncomeCategories())
+  const [categories, setCategories] = useState(() => getCachedCategories().categories)
+  const [incomeCategories, setIncomeCategories] = useState(() => getCachedCategories().incomeCategories)
   const [loading, setLoading] = useState(false)
   const [isUsingCache, setIsUsingCache] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
@@ -111,6 +111,40 @@ function App() {
   const processingRef = useRef(false)
   const loadIdRef = useRef(0)
   const initialFinalizedSyncRef = useRef(null)
+
+  const isAnyModalOpen = Boolean(
+    showAddModal ||
+    editingExpense ||
+    showIncomeModal ||
+    showSavingsGoalModal ||
+    showFixedExpensesModal ||
+    finalizeModalMonth !== null ||
+    deletingExpense ||
+    showChartsModal ||
+    showPushModal ||
+    showDebugModal
+  )
+
+  useEffect(() => {
+    if (isAnyModalOpen) {
+      const originalBodyOverflow = document.body.style.overflow
+      const originalHtmlOverflow = document.documentElement.style.overflow
+      const originalBodyOverscroll = document.body.style.overscrollBehavior
+      const originalHtmlOverscroll = document.documentElement.style.overscrollBehavior
+
+      document.body.style.overflow = 'hidden'
+      document.documentElement.style.overflow = 'hidden'
+      document.body.style.overscrollBehavior = 'none'
+      document.documentElement.style.overscrollBehavior = 'none'
+
+      return () => {
+        document.body.style.overflow = originalBodyOverflow
+        document.documentElement.style.overflow = originalHtmlOverflow
+        document.body.style.overscrollBehavior = originalBodyOverscroll
+        document.documentElement.style.overscrollBehavior = originalHtmlOverscroll
+      }
+    }
+  }, [isAnyModalOpen])
 
   useEffect(() => {
     const unsub = subscribePushQueue((q) => {
@@ -205,6 +239,15 @@ function App() {
     }
 
     setIsUsingCache(hasCache)
+
+    // Las categorías se refrescan aunque el mes ya tenga caché.
+    // Así no se mezclan listas antiguas ni se pierden categorías nuevas.
+    if (hasCache) {
+      fetchCategories().then((data) => {
+        if (data?.categories?.length > 0) setCategories(data.categories)
+        if (data?.incomeCategories?.length > 0) setIncomeCategories(data.incomeCategories)
+      }).catch((err) => console.warn('Error actualizando categorías:', err.message))
+    }
 
     // Si ya tenemos datos en local y no es un force explícito, no bloqueamos la UI con peticiones de red
     if (hasCache && !force) {
@@ -321,23 +364,13 @@ function App() {
 
     // Show cached categories instantly (or fallback), then refresh in background.
     const cachedCategories = getCachedCategories()
-    if (cachedCategories?.categories?.length > 0) {
-      setCategories(cachedCategories.categories)
-    } else {
-      setCategories((prev) => prev.length > 0 ? prev : DEFAULT_CATEGORIES)
-    }
-    if (cachedCategories?.incomeCategories?.length > 0) {
-      setIncomeCategories(cachedCategories.incomeCategories)
-    }
+    if (cachedCategories?.categories?.length > 0) setCategories(cachedCategories.categories)
+    if (cachedCategories?.incomeCategories?.length > 0) setIncomeCategories(cachedCategories.incomeCategories)
 
     try {
       const data = await fetchCategories()
-      if (data.categories?.length > 0) {
-        setCategories(data.categories)
-      }
-      if (data.incomeCategories?.length > 0) {
-        setIncomeCategories(data.incomeCategories)
-      }
+      if (data?.categories?.length > 0) setCategories(data.categories)
+      if (data?.incomeCategories?.length > 0) setIncomeCategories(data.incomeCategories)
     } catch (err) {
       console.warn('Error refrescando categorías en background:', err.message)
     }
@@ -361,12 +394,14 @@ function App() {
 
     if (type === 'income') {
       const incCat = cleanCat || 'Euromar'
+      recordCategoryUsage(incCat, 'income')
       const res = stageAddIncome(monthName, incCat, numAmount)
       if (res?.summary) setSummary(res.summary)
       toast.success(`Ingreso "${incCat}" guardado en local (pendiente de Push)`)
       return
     }
 
+    recordCategoryUsage(cleanCat, 'expense')
     const res = stageAddExpense(monthName, cleanCat, numAmount)
     if (res?.summary) setSummary(res.summary)
     if (res?.expenses) setExpenses(res.expenses)
@@ -381,6 +416,7 @@ function App() {
     if (!cleanCat || isNaN(numAmount) || numAmount <= 0) return
 
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+    recordCategoryUsage(cleanCat, 'expense')
     const res = stageUpdateExpense(monthName, expense.row, expense.category, expense.amount, cleanCat, numAmount)
     if (res?.summary) setSummary(res.summary)
     if (res?.expenses) setExpenses(res.expenses)
@@ -812,6 +848,10 @@ function App() {
           <AddExpenseModal
             categories={categories}
             incomeCategories={incomeCategories}
+            onCategoriesUpdated={(fresh) => {
+              if (fresh?.categories) setCategories(fresh.categories)
+              if (fresh?.incomeCategories) setIncomeCategories(fresh.incomeCategories)
+            }}
             onAdd={handleAddExpense}
             onClose={() => setShowAddModal(false)}
           />
@@ -824,6 +864,10 @@ function App() {
           <EditExpenseModal
             expense={editingExpense}
             categories={categories}
+            onCategoriesUpdated={(fresh) => {
+              if (fresh?.categories) setCategories(fresh.categories)
+              if (fresh?.incomeCategories) setIncomeCategories(fresh.incomeCategories)
+            }}
             onSave={handleEditExpense}
             onClose={() => setEditingExpense(null)}
           />
@@ -884,7 +928,7 @@ function App() {
       <AnimatePresence>
         {deletingExpense && (
           <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 overscroll-contain"
             onClick={() => setDeletingExpense(null)}
           >
             {/* Backdrop */}
@@ -892,7 +936,8 @@ function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs"
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs touch-none overscroll-none"
+              onTouchMove={(e) => e.preventDefault()}
             />
 
             {/* Dialog Content */}

@@ -140,13 +140,8 @@ export function setSpreadsheetUrl(url) {
   }
 }
 
-export const DEFAULT_CATEGORIES = [
-  'Fiesta bebida', 'Fiesta entradas', 'Restaurante', 'Bebidas',
-  'Bizzum', 'Viajes tickets', 'Peluquerias', 'Cosmetico',
-  'Chino Bazar', 'Cafetería', 'Restaurante (Tarjeta Rest)', 'Ocio',
-  'Supermecado', 'Museo', 'Regalos', 'NOT TRACKED',
-  'Transporte', 'Musica Tickets', 'Tramites',
-]
+export const DEFAULT_CATEGORIES = []
+export const DEFAULT_INCOME_CATEGORIES = []
 
 /* ---- Helpers ---- */
 
@@ -383,27 +378,48 @@ export function getCachedExpenses(month) {
 }
 
 export function getCachedCategories() {
-  return getCacheEntry('categories')
+  const cached = getCacheEntry('categories')
+  return {
+    categories: Array.isArray(cached?.categories) ? cached.categories : [],
+    incomeCategories: Array.isArray(cached?.incomeCategories) ? cached.incomeCategories : [],
+  }
 }
 
 export function getCachedIncomeCategories() {
   const cached = getCacheEntry('categories')
-  return cached?.incomeCategories || ['Euromar', 'Euromar Extra', 'Bizzum Tarjeta Rest', 'Bizz', 'Nómina', 'Extra']
+  return Array.isArray(cached?.incomeCategories) ? cached.incomeCategories : []
 }
 
 /* ---- Categorías ---- */
 
+export async function refreshCategoriesFromSheets() {
+  const data = await callApi({ action: 'getCategories' })
+  if (data?.error) {
+    throw new Error(data.error)
+  }
+  const result = {
+    categories: Array.isArray(data?.categories) ? data.categories : [],
+    incomeCategories: Array.isArray(data?.incomeCategories) ? data.incomeCategories : [],
+  }
+  setCacheEntry('categories', result)
+  return result
+}
+
 export async function getCategories() {
   try {
     const data = await callApi({ action: 'getCategories' })
-    if (data.categories?.length > 0 || data.incomeCategories?.length > 0) {
-      setCacheEntry('categories', data)
+    if (data?.error) throw new Error(data.error)
+    const result = {
+      categories: Array.isArray(data?.categories) ? data.categories : [],
+      incomeCategories: Array.isArray(data?.incomeCategories) ? data.incomeCategories : [],
     }
-    return data
+    if (result.categories.length > 0 || result.incomeCategories.length > 0) {
+      setCacheEntry('categories', result)
+    }
+    return result
   } catch (err) {
-    const cached = getCacheEntry('categories')
-    if (cached) return cached
-    throw err
+    const cached = getCachedCategories()
+    return cached
   }
 }
 
@@ -2249,5 +2265,106 @@ export async function getControlPanelData(forceRefresh = false) {
   }
 
   return DEFAULT_CONTROL_PANEL_DATA
+}
+
+/* ================================================================
+ *  SISTEMA DE CATEGORÍAS RECURRENTES / FRECUENTES
+ * ================================================================ */
+
+const CATEGORY_USAGE_STORAGE_KEY = 'control_gastos_category_usage_v1'
+
+export function getStoredCategoryUsage() {
+  try {
+    const raw = localStorage.getItem(CATEGORY_USAGE_STORAGE_KEY)
+    if (!raw) return { expenses: {}, incomes: {} }
+    const parsed = JSON.parse(raw)
+    return {
+      expenses: parsed?.expenses && typeof parsed.expenses === 'object' ? parsed.expenses : {},
+      incomes: parsed?.incomes && typeof parsed.incomes === 'object' ? parsed.incomes : {},
+    }
+  } catch (_) {
+    return { expenses: {}, incomes: {} }
+  }
+}
+
+export function recordCategoryUsage(category, type = 'expense') {
+  const clean = String(category || '').trim()
+  if (!clean) return
+
+  try {
+    const current = getStoredCategoryUsage()
+    const targetKey = type === 'income' ? 'incomes' : 'expenses'
+    const bucket = current[targetKey] || {}
+    bucket[clean] = (bucket[clean] || 0) + 1
+    current[targetKey] = bucket
+    localStorage.setItem(CATEGORY_USAGE_STORAGE_KEY, JSON.stringify(current))
+  } catch (err) {
+    console.warn('Error guardando recurrencia de categoría:', err)
+  }
+}
+
+export function getCategoryUsageCounts(type = 'expense') {
+  const stored = getStoredCategoryUsage()
+  const counts = { ...(type === 'income' ? stored.incomes : stored.expenses) }
+
+  // Complementar con el historial real de los gastos/ingresos ya cacheados en memoria
+  try {
+    const cacheStore = getCacheStore()
+    if (type === 'expense') {
+      for (const m of ALL_MONTHS) {
+        const expEntry = cacheStore['expenses_' + m]
+        if (expEntry?.data?.expenses && Array.isArray(expEntry.data.expenses)) {
+          for (const item of expEntry.data.expenses) {
+            const cat = String(item.category || '').trim()
+            if (cat) {
+              counts[cat] = (counts[cat] || 0) + 1
+            }
+          }
+        }
+      }
+    } else {
+      for (const m of ALL_MONTHS) {
+        const incEntry = cacheStore['incomes_' + m]
+        if (incEntry?.data?.incomes && Array.isArray(incEntry.data.incomes)) {
+          for (const item of incEntry.data.incomes) {
+            const cat = String(item.category || '').trim()
+            if (cat) {
+              counts[cat] = (counts[cat] || 0) + 1
+            }
+          }
+        }
+      }
+    }
+  } catch (_) {}
+
+  return counts
+}
+
+/**
+ * Devuelve las categorías más recurrentes para mostrar como sugerencias rápidas.
+ * Si las categorías no tienen registros aún, preserva el orden original del Excel
+ * (mostrando las primeras de la lista). Conforme se usan, suben las más comunes.
+ */
+export function getTopRecurringCategories(categoriesList, type = 'expense', limit = 5) {
+  if (!Array.isArray(categoriesList) || categoriesList.length === 0) return []
+
+  const counts = getCategoryUsageCounts(type)
+
+  // Crear copia con índice original para desempatar respetando el orden del Excel
+  const indexed = categoriesList.map((cat, idx) => ({
+    name: cat,
+    originalIndex: idx,
+    count: counts[cat] || 0,
+  }))
+
+  // Ordenar: primero las que tienen mayor uso; ante empate o sin uso, orden original del Excel
+  indexed.sort((a, b) => {
+    if (b.count !== a.count) {
+      return b.count - a.count
+    }
+    return a.originalIndex - b.originalIndex
+  })
+
+  return indexed.slice(0, limit).map((item) => item.name)
 }
 

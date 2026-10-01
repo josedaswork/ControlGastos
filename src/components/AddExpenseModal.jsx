@@ -1,15 +1,26 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { X, ChevronDown, Check, Tag, TrendingUp, ShoppingBag } from 'lucide-react'
+import { X, ChevronDown, Check, Tag, TrendingUp, ShoppingBag, RefreshCw } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
+import { refreshCategoriesFromSheets, getTopRecurringCategories, recordCategoryUsage } from '@/lib/sheetsApi'
+import { toast } from 'sonner'
 
 const EXPENSE_QUICK_AMOUNTS = [5, 10, 20, 50]
 const INCOME_QUICK_AMOUNTS = [50, 100, 200, 500]
 
-export default function AddExpenseModal({ categories = [], incomeCategories = [], onAdd, onClose }) {
+export default function AddExpenseModal({
+  categories = [],
+  incomeCategories = [],
+  onCategoriesUpdated,
+  onAdd,
+  onClose,
+}) {
   const [type, setType] = useState('expense') // 'expense' | 'income'
+  const [localCategories, setLocalCategories] = useState(categories)
+  const [localIncomeCategories, setLocalIncomeCategories] = useState(incomeCategories)
+  const [refreshingCategories, setRefreshingCategories] = useState(false)
   const [category, setCategory] = useState('')
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState(false)
@@ -18,14 +29,24 @@ export default function AddExpenseModal({ categories = [], incomeCategories = []
   const dropdownRef = useRef(null)
   const inputRef = useRef(null)
 
+  useEffect(() => {
+    setLocalCategories(categories)
+  }, [categories])
+
+  useEffect(() => {
+    setLocalIncomeCategories(incomeCategories)
+  }, [incomeCategories])
+
   const activeCategories = useMemo(() => {
     if (type === 'income') {
-      return incomeCategories.length > 0
-        ? incomeCategories
-        : ['Euromar', 'Euromar Extra', 'Bizzum Tarjeta Rest', 'Bizz', 'Nómina', 'Extra']
+      return localIncomeCategories
     }
-    return categories
-  }, [type, categories, incomeCategories])
+    return localCategories
+  }, [type, localCategories, localIncomeCategories])
+
+  const suggestedCategories = useMemo(() => {
+    return getTopRecurringCategories(activeCategories, type, 5)
+  }, [activeCategories, type])
 
   const filtered = useMemo(() => {
     if (!search.trim()) return activeCategories
@@ -38,6 +59,18 @@ export default function AddExpenseModal({ categories = [], incomeCategories = []
   const isValid = Boolean(effectiveCategory && !isNaN(parsedAmount) && parsedAmount > 0)
 
   useEffect(() => {
+    const originalBodyOverflow = document.body.style.overflow
+    const originalHtmlOverflow = document.documentElement.style.overflow
+    document.body.style.overflow = 'hidden'
+    document.documentElement.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = originalBodyOverflow
+      document.documentElement.style.overflow = originalHtmlOverflow
+    }
+  }, [])
+
+  useEffect(() => {
     const handleClick = (e) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
         setOpen(false)
@@ -46,6 +79,26 @@ export default function AddExpenseModal({ categories = [], incomeCategories = []
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
+
+  const handleRefreshCategories = async () => {
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+    setRefreshingCategories(true)
+    const toastId = toast.loading('Leyendo pestaña de categorías desde Sheets...')
+    try {
+      const fresh = await refreshCategoriesFromSheets()
+      const newCats = Array.isArray(fresh?.categories) ? fresh.categories : []
+      const newInc = Array.isArray(fresh?.incomeCategories) ? fresh.incomeCategories : []
+      setLocalCategories(newCats)
+      setLocalIncomeCategories(newInc)
+      onCategoriesUpdated?.(fresh)
+      const count = type === 'income' ? newInc.length : newCats.length
+      toast.success(`Categorías actualizadas en local (${count} disponibles)`, { id: toastId })
+    } catch (err) {
+      toast.error('Error al actualizar categorías: ' + (err.message || 'Error de red'), { id: toastId })
+    } finally {
+      setRefreshingCategories(false)
+    }
+  }
 
   const handleSelect = (cat) => {
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
@@ -66,6 +119,7 @@ export default function AddExpenseModal({ categories = [], incomeCategories = []
 
     Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {})
     setSubmitting(true)
+    recordCategoryUsage(effectiveCategory, type)
     try {
       await onAdd(effectiveCategory, parsedAmount, type)
     } finally {
@@ -77,15 +131,16 @@ export default function AddExpenseModal({ categories = [], incomeCategories = []
   const quickList = isIncome ? INCOME_QUICK_AMOUNTS : EXPENSE_QUICK_AMOUNTS
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center">
-      {/* Backdrop with Fade */}
+    <div className="fixed inset-0 z-50 flex items-end justify-center overscroll-contain">
+      {/* Backdrop with Fade and Touch Lock */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={{ duration: 0.2 }}
-        className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs"
+        className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs touch-none overscroll-none"
         onClick={onClose}
+        onTouchMove={(e) => e.preventDefault()}
       />
 
       {/* Material 3 Bottom Sheet with Spring Slide-Up and Drag-down gesture */}
@@ -102,7 +157,7 @@ export default function AddExpenseModal({ categories = [], incomeCategories = []
         animate={{ y: 0 }}
         exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 30, stiffness: 350 }}
-        className="relative w-full max-w-md bg-white rounded-t-[28px] p-6 pb-8 border-t border-slate-200/90 shadow-2xl z-10 max-h-[90vh] overflow-y-auto"
+        className="relative w-full max-w-md bg-white rounded-t-[28px] p-6 pb-8 border-t border-slate-200/90 shadow-2xl z-10 max-h-[90vh] overflow-y-auto overscroll-contain"
       >
         {/* Drag Handle Bar */}
         <div className="w-12 h-1.5 bg-slate-300 rounded-full mx-auto mb-4 cursor-grab active:cursor-grabbing hover:bg-slate-400 transition-colors" />
@@ -170,133 +225,170 @@ export default function AddExpenseModal({ categories = [], incomeCategories = []
           </button>
         </div>
 
-        {activeCategories.length === 0 ? (
-          <div className="text-center py-8 text-slate-500">
-            <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin mx-auto mb-2" />
-            <p className="text-sm">Cargando categorías...</p>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Category selection */}
-            <div ref={dropdownRef} className="relative">
-              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Banner si no hay categorías cargadas aún en local */}
+          {activeCategories.length === 0 && (
+            <div className="p-3 bg-amber-50/90 border border-amber-200/80 rounded-2xl flex items-center justify-between gap-2 text-xs text-amber-900">
+              <span className="font-medium">No hay categorías cargadas en local</span>
+              <button
+                type="button"
+                onClick={handleRefreshCategories}
+                disabled={refreshingCategories}
+                className="px-2.5 py-1 bg-white hover:bg-amber-100/70 border border-amber-300 rounded-xl text-xs font-bold text-amber-900 flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3 h-3 ${refreshingCategories ? 'animate-spin' : ''}`} />
+                <span>{refreshingCategories ? 'Cargando...' : 'Actualizar Categorías'}</span>
+              </button>
+            </div>
+          )}
+
+          {/* Category selection */}
+          <div ref={dropdownRef} className="relative">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">
                 {isIncome ? 'Concepto de Ingreso' : 'Categoría del Gasto'}
               </label>
-              <div className="relative">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  placeholder={isIncome ? 'Ej. Euromar, Bizzum, Nómina...' : 'Selecciona o busca categoría...'}
-                  value={search}
-                  onFocus={() => setOpen(true)}
-                  onChange={(e) => {
-                    setSearch(e.target.value)
-                    setCategory('')
-                    setOpen(true)
-                  }}
-                  className={`flex h-12 w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2 pr-10 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 transition-all ${
-                    isIncome ? 'focus:ring-emerald-500/20 focus:border-emerald-500' : 'focus:ring-primary/20 focus:border-primary'
-                  }`}
-                />
-                <button
-                  type="button"
-                  onClick={() => { setOpen(!open); inputRef.current?.focus() }}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-slate-600"
-                >
-                  <ChevronDown
-                    className={`h-4 w-4 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
-                  />
-                </button>
-              </div>
-
-              {/* Quick suggestion chips */}
-              {!open && activeCategories.length > 0 && !category && (
-                <div className="flex flex-wrap gap-1.5 mt-2.5">
-                  {activeCategories.slice(0, 5).map((cat) => (
-                    <motion.button
-                      key={cat}
-                      type="button"
-                      whileTap={{ scale: 0.92 }}
-                      whileHover={{ scale: 1.03 }}
-                      onClick={() => handleSelect(cat)}
-                      className={`text-xs font-medium px-2.5 py-1 rounded-lg border transition-colors flex items-center gap-1 cursor-pointer ${
-                        isIncome
-                          ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200/80'
-                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200/60'
-                      }`}
-                    >
-                      <Tag className={`w-2.5 h-2.5 ${isIncome ? 'text-emerald-500' : 'text-slate-400'}`} />
-                      {cat}
-                    </motion.button>
-                  ))}
-                </div>
-              )}
-
-              {/* Dropdown menu */}
-              <AnimatePresence>
-                {open && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -8, scale: 0.98 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -8, scale: 0.98 }}
-                    transition={{ duration: 0.15 }}
-                    className="absolute z-20 mt-1.5 w-full max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl py-1"
-                  >
-                    {filtered.length > 0 ? (
-                      <>
-                        {filtered.map((cat) => {
-                          const isSelected = effectiveCategory === cat
-                          return (
-                            <button
-                              key={cat}
-                              type="button"
-                              onClick={() => handleSelect(cat)}
-                              className={`w-full text-left px-3.5 py-2.5 text-sm font-medium transition-colors flex items-center justify-between cursor-pointer ${
-                                isSelected
-                                  ? (isIncome ? 'bg-emerald-50 text-emerald-700 font-semibold' : 'bg-primary/10 text-primary font-semibold')
-                                  : 'text-slate-700 hover:bg-slate-50'
-                              }`}
-                            >
-                              <span>{cat}</span>
-                              {isSelected && <Check className={`w-4 h-4 ${isIncome ? 'text-emerald-600' : 'text-primary'}`} />}
-                            </button>
-                          )
-                        })}
-                        {search.trim() && !activeCategories.some(c => c.toLowerCase() === search.trim().toLowerCase()) && (
-                          <button
-                            type="button"
-                            onClick={() => handleSelect(search.trim())}
-                            className={`w-full text-left px-3.5 py-2.5 text-xs font-semibold border-t border-slate-100 flex items-center gap-1.5 cursor-pointer ${
-                              isIncome ? 'text-emerald-600 hover:bg-emerald-50' : 'text-primary hover:bg-primary/5'
-                            }`}
-                          >
-                            <span>+ Usar nuevo concepto: <strong>"{search.trim()}"</strong></span>
-                          </button>
-                        )}
-                      </>
-                    ) : (
-                      <div className="p-2">
-                        {search.trim() ? (
-                          <button
-                            type="button"
-                            onClick={() => handleSelect(search.trim())}
-                            className={`w-full text-left px-3 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer ${
-                              isIncome ? 'text-emerald-600 hover:bg-emerald-50' : 'text-primary hover:bg-primary/5'
-                            }`}
-                          >
-                            <span>+ Usar nuevo concepto: <strong>"{search.trim()}"</strong></span>
-                          </button>
-                        ) : (
-                          <p className="px-3 py-2 text-xs text-slate-400 text-center">
-                            Escribe para buscar o añadir
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              <button
+                type="button"
+                onClick={handleRefreshCategories}
+                disabled={refreshingCategories}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold text-primary bg-primary/10 hover:bg-primary/20 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                title="Lee la pestaña de categorías de Google Sheets y las actualiza en local"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshingCategories ? 'animate-spin' : ''}`} />
+                <span>{refreshingCategories ? 'Actualizando...' : 'Actualizar Categorías'}</span>
+              </button>
             </div>
+
+            <div className="relative">
+              <input
+                ref={inputRef}
+                type="text"
+                placeholder={isIncome ? 'Ej. Euromar, Bizzum, Nómina...' : 'Selecciona o busca categoría...'}
+                value={search}
+                onFocus={() => setOpen(true)}
+                onChange={(e) => {
+                  setSearch(e.target.value)
+                  setCategory('')
+                  setOpen(true)
+                }}
+                className={`flex h-12 w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2 pr-10 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 transition-all ${
+                  isIncome ? 'focus:ring-emerald-500/20 focus:border-emerald-500' : 'focus:ring-primary/20 focus:border-primary'
+                }`}
+              />
+              <button
+                type="button"
+                onClick={() => { setOpen(!open); inputRef.current?.focus() }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-slate-600"
+              >
+                <ChevronDown
+                  className={`h-4 w-4 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+                />
+              </button>
+            </div>
+
+            {/* Quick suggestion chips (ordenadas por recurrencia/frecuencia de uso) */}
+            {!open && suggestedCategories.length > 0 && !category && (
+              <div className="flex flex-wrap gap-1.5 mt-2.5">
+                {suggestedCategories.map((cat) => (
+                  <motion.button
+                    key={cat}
+                    type="button"
+                    whileTap={{ scale: 0.92 }}
+                    whileHover={{ scale: 1.03 }}
+                    onClick={() => handleSelect(cat)}
+                    className={`text-xs font-medium px-2.5 py-1 rounded-lg border transition-colors flex items-center gap-1 cursor-pointer ${
+                      isIncome
+                        ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200/80'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200/60'
+                    }`}
+                  >
+                    <Tag className={`w-2.5 h-2.5 ${isIncome ? 'text-emerald-500' : 'text-slate-400'}`} />
+                    {cat}
+                  </motion.button>
+                ))}
+              </div>
+            )}
+
+            {/* Dropdown menu */}
+            <AnimatePresence>
+              {open && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.98 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute z-20 mt-1.5 w-full max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl py-1"
+                >
+                  {filtered.length > 0 ? (
+                    <>
+                      {filtered.map((cat) => {
+                        const isSelected = effectiveCategory === cat
+                        return (
+                          <button
+                            key={cat}
+                            type="button"
+                            onClick={() => handleSelect(cat)}
+                            className={`w-full text-left px-3.5 py-2.5 text-sm font-medium transition-colors flex items-center justify-between cursor-pointer ${
+                              isSelected
+                                ? (isIncome ? 'bg-emerald-50 text-emerald-700 font-semibold' : 'bg-primary/10 text-primary font-semibold')
+                                : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span>{cat}</span>
+                            {isSelected && <Check className={`w-4 h-4 ${isIncome ? 'text-emerald-600' : 'text-primary'}`} />}
+                          </button>
+                        )
+                      })}
+                      {search.trim() && !activeCategories.some(c => c.toLowerCase() === search.trim().toLowerCase()) && (
+                        <button
+                          type="button"
+                          onClick={() => handleSelect(search.trim())}
+                          className={`w-full text-left px-3.5 py-2.5 text-xs font-semibold border-t border-slate-100 flex items-center gap-1.5 cursor-pointer ${
+                            isIncome ? 'text-emerald-600 hover:bg-emerald-50' : 'text-primary hover:bg-primary/5'
+                          }`}
+                        >
+                          <span>+ Usar nuevo concepto: <strong>"{search.trim()}"</strong></span>
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <div className="p-2">
+                      {search.trim() ? (
+                        <button
+                          type="button"
+                          onClick={() => handleSelect(search.trim())}
+                          className={`w-full text-left px-3 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer ${
+                            isIncome ? 'text-emerald-600 hover:bg-emerald-50' : 'text-primary hover:bg-primary/5'
+                          }`}
+                        >
+                          <span>+ Usar nuevo concepto: <strong>"{search.trim()}"</strong></span>
+                        </button>
+                      ) : (
+                        <p className="px-3 py-2 text-xs text-slate-400 text-center">
+                          Escribe para buscar o añadir
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Botón de actualizar categorías dentro del desplegable */}
+                  <div className="border-t border-slate-100 p-1.5 bg-slate-50/80 sticky bottom-0">
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={handleRefreshCategories}
+                      disabled={refreshingCategories}
+                      className="w-full text-center py-1.5 px-2 text-xs font-bold text-primary hover:bg-primary/10 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${refreshingCategories ? 'animate-spin' : ''}`} />
+                      <span>{refreshingCategories ? 'Actualizando...' : 'Actualizar Categorías'}</span>
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
 
             {/* Amount input */}
             <div>
@@ -361,7 +453,6 @@ export default function AddExpenseModal({ categories = [], incomeCategories = []
               </motion.div>
             </div>
           </form>
-        )}
       </motion.div>
     </div>
   )
