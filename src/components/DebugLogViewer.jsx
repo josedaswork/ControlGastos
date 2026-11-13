@@ -101,7 +101,7 @@ export default function DebugLogViewer({ onClose }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs overscroll-contain touch-none"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 dark:bg-slate-950/75 backdrop-blur-xs overscroll-contain touch-none"
       onClick={onClose}
       onTouchMove={(e) => e.preventDefault()}
     >
@@ -110,28 +110,28 @@ export default function DebugLogViewer({ onClose }) {
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 15 }}
         transition={{ type: 'spring', damping: 25, stiffness: 350 }}
-        className="w-full max-w-lg max-h-[90vh] bg-white rounded-3xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden overscroll-contain"
+        className="w-full max-w-lg max-h-[90vh] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden overscroll-contain"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-950/60">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-violet-100 text-violet-700 flex items-center justify-center shadow-xs">
+            <div className="w-9 h-9 rounded-xl bg-violet-100 dark:bg-violet-950/70 text-violet-700 dark:text-violet-300 flex items-center justify-center shadow-xs">
               <Bug className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-slate-900 leading-tight">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 leading-tight">
                   Registro de Tareas (DEBUG)
                 </h3>
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60">
                   Activo
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 {logs.length} tarea(s) registradas
                 {errorCount > 0 && (
-                  <span className="ml-1.5 text-rose-600 font-semibold">
+                  <span className="ml-1.5 text-rose-600 dark:text-rose-400 font-semibold">
                     ({errorCount} {errorCount === 1 ? 'error' : 'errores'})
                   </span>
                 )}
@@ -145,7 +145,7 @@ export default function DebugLogViewer({ onClose }) {
               onClick={handleTestPing}
               disabled={testingPing}
               title="Lanzar petición ping de prueba"
-              className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-medium flex items-center gap-1 transition-colors disabled:opacity-50"
+              className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium flex items-center gap-1 transition-colors disabled:opacity-50"
             >
               <Zap className={`w-3.5 h-3.5 text-amber-500 ${testingPing ? 'animate-spin' : ''}`} />
               <span className="hidden sm:inline">Probar</span> Ping
@@ -153,7 +153,7 @@ export default function DebugLogViewer({ onClose }) {
             <button
               type="button"
               onClick={onClose}
-              className="w-8 h-8 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 flex items-center justify-center transition-colors"
+              className="w-8 h-8 rounded-full text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800 flex items-center justify-center transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
@@ -161,15 +161,15 @@ export default function DebugLogViewer({ onClose }) {
         </div>
 
         {/* Filter and Search Bar */}
-        <div className="px-5 py-3 border-b border-slate-100 bg-white space-y-2.5">
+        <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2.5">
           <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 text-xs">
             <button
               type="button"
               onClick={() => setFilter('all')}
               className={`px-3 py-1.5 rounded-xl font-semibold transition-all shrink-0 ${
                 filter === 'all'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
+                  ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 shadow-xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-700'
               }`}
             >
               Todos ({logs.length})
@@ -180,7 +180,7 @@ export default function DebugLogViewer({ onClose }) {
               className={`px-3 py-1.5 rounded-xl font-semibold transition-all shrink-0 flex items-center gap-1 ${
                 filter === 'errors'
                   ? 'bg-rose-600 text-white shadow-xs'
-                  : 'bg-rose-50 text-rose-700 border border-rose-200/80 hover:bg-rose-100'
+                  : 'bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border border-rose-200/80 dark:border-rose-800/60 hover:bg-rose-100 dark:hover:bg-rose-900/50'
               }`}
             >
               <AlertCircle className="w-3.5 h-3.5" />
@@ -192,7 +192,7 @@ export default function DebugLogViewer({ onClose }) {
               className={`px-3 py-1.5 rounded-xl font-semibold transition-all shrink-0 flex items-center gap-1 ${
                 filter === 'success'
                   ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-emerald-50 text-emerald-700 border border-emerald-200/80 hover:bg-emerald-100'
+                  : 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/50'
               }`}
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
@@ -202,13 +202,13 @@ export default function DebugLogViewer({ onClose }) {
 
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Buscar por acción, error o datos..."
-                className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder:text-slate-400 focus:outline-hidden focus:bg-white focus:border-slate-400 transition-colors"
+                className="w-full pl-8 pr-3 py-1.5 bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-hidden focus:bg-white dark:focus:bg-slate-900 focus:border-slate-400 dark:focus:border-slate-500 transition-colors"
               />
             </div>
             {logs.length > 0 && (
@@ -217,16 +217,16 @@ export default function DebugLogViewer({ onClose }) {
                   type="button"
                   onClick={handleCopyLogs}
                   title="Copiar todos los registros"
-                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors shrink-0"
+                  className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors shrink-0"
                 >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                   <span>{copied ? 'Copiado' : 'Copiar'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={handleClear}
                   title="Limpiar registros"
-                  className="p-1.5 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-500 rounded-xl text-xs transition-colors shrink-0"
+                  className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/60 hover:text-rose-600 dark:hover:text-rose-400 text-slate-500 dark:text-slate-400 rounded-xl text-xs transition-colors shrink-0"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -236,18 +236,18 @@ export default function DebugLogViewer({ onClose }) {
         </div>
 
         {/* Logs List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2.5 min-h-[260px] bg-slate-50/50">
+        <div className="flex-1 overflow-y-auto p-4 space-y-2.5 min-h-[260px] bg-slate-50/50 dark:bg-slate-950/50">
           {filteredLogs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center text-slate-400">
-              <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mb-3 text-slate-400">
+            <div className="flex flex-col items-center justify-center py-12 text-center text-slate-400 dark:text-slate-500">
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3 text-slate-400 dark:text-slate-500">
                 <Bug className="w-6 h-6" />
               </div>
-              <p className="text-sm font-semibold text-slate-700">
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
                 {logs.length === 0
                   ? 'No hay tareas registradas aún'
                   : 'Ninguna tarea coincide con el filtro'}
               </p>
-              <p className="text-xs text-slate-500 max-w-xs mt-1">
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mt-1">
                 {logs.length === 0
                   ? 'Las peticiones a Google Sheets (cargar mes, actualizar ingresos, sincronizar, etc.) se registrarán aquí en tiempo real.'
                   : 'Prueba a cambiar el filtro o limpiar el campo de búsqueda.'}
@@ -256,7 +256,7 @@ export default function DebugLogViewer({ onClose }) {
                 <button
                   type="button"
                   onClick={handleTestPing}
-                  className="mt-4 px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50"
+                  className="mt-4 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 shadow-xs hover:bg-slate-50 dark:hover:bg-slate-700"
                 >
                   Generar evento de prueba (Ping)
                 </button>
@@ -274,12 +274,12 @@ export default function DebugLogViewer({ onClose }) {
                   key={log.id}
                   className={`rounded-2xl border transition-all overflow-hidden ${
                     isError
-                      ? 'bg-rose-50/70 border-rose-200 text-rose-950'
+                      ? 'bg-rose-50/70 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/70 text-rose-950 dark:text-rose-100'
                       : isSuccess
-                      ? 'bg-white border-slate-200/90 text-slate-800'
+                      ? 'bg-white dark:bg-slate-900 border-slate-200/90 dark:border-slate-800 text-slate-800 dark:text-slate-100'
                       : isPending
-                      ? 'bg-amber-50/70 border-amber-200 text-amber-950'
-                      : 'bg-white border-slate-200 text-slate-800'
+                      ? 'bg-amber-50/70 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/60 text-amber-950 dark:text-amber-100'
+                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100'
                   }`}
                 >
                   <button
@@ -289,9 +289,9 @@ export default function DebugLogViewer({ onClose }) {
                   >
                     <div className="flex items-start gap-2.5 flex-1 min-w-0">
                       <div className="mt-0.5 shrink-0">
-                        {isError && <AlertCircle className="w-4 h-4 text-rose-600" />}
-                        {isSuccess && <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
-                        {isPending && <RefreshCw className="w-4 h-4 text-amber-600 animate-spin" />}
+                        {isError && <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400" />}
+                        {isSuccess && <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
+                        {isPending && <RefreshCw className="w-4 h-4 text-amber-600 dark:text-amber-400 animate-spin" />}
                         {!isError && !isSuccess && !isPending && (
                           <div className="w-2 h-2 rounded-full bg-slate-400 mt-1" />
                         )}
@@ -302,18 +302,18 @@ export default function DebugLogViewer({ onClose }) {
                           <span
                             className={`font-mono font-bold text-[11px] px-1.5 py-0.5 rounded-md ${
                               isError
-                                ? 'bg-rose-200/80 text-rose-800'
-                                : 'bg-slate-100 text-slate-700'
+                                ? 'bg-rose-200/80 dark:bg-rose-900/70 text-rose-800 dark:text-rose-200'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
                             }`}
                           >
                             {log.action}
                           </span>
-                          <span className="text-[11px] text-slate-400 flex items-center gap-1 font-mono">
+                          <span className="text-[11px] text-slate-400 dark:text-slate-500 flex items-center gap-1 font-mono">
                             <Clock className="w-3 h-3 inline" />
                             {log.time}
                           </span>
                           {log.durationMs != null && (
-                            <span className="text-[10px] text-slate-500 font-mono font-medium">
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono font-medium">
                               {log.durationMs}ms
                             </span>
                           )}
@@ -324,14 +324,14 @@ export default function DebugLogViewer({ onClose }) {
                         </p>
 
                         {log.error && (
-                          <p className="text-xs text-rose-700 font-medium mt-1 leading-snug break-words">
+                          <p className="text-xs text-rose-700 dark:text-rose-300 font-medium mt-1 leading-snug break-words">
                             ❌ {log.error}
                           </p>
                         )}
                       </div>
                     </div>
 
-                    <div className="shrink-0 text-slate-400 pt-0.5">
+                    <div className="shrink-0 text-slate-400 dark:text-slate-500 pt-0.5">
                       {isExpanded ? (
                         <ChevronUp className="w-4 h-4" />
                       ) : (
@@ -345,14 +345,14 @@ export default function DebugLogViewer({ onClose }) {
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
-                      className="px-3.5 pb-3.5 pt-1 border-t border-slate-100/80 space-y-2 text-xs"
+                      className="px-3.5 pb-3.5 pt-1 border-t border-slate-100/80 dark:border-slate-800/80 space-y-2 text-xs"
                     >
                       {log.params && (
                         <div>
-                          <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                          <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
                             Parámetros enviados
                           </div>
-                          <pre className="p-2 rounded-xl bg-slate-900 text-slate-100 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap leading-tight">
+                          <pre className="p-2 rounded-xl bg-slate-900 dark:bg-slate-950 text-slate-100 border border-slate-800 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap leading-tight">
                             {JSON.stringify(log.params, null, 2)}
                           </pre>
                         </div>
@@ -360,10 +360,10 @@ export default function DebugLogViewer({ onClose }) {
 
                       {log.error && (
                         <div>
-                          <div className="text-[10px] font-bold text-rose-700 uppercase tracking-wider mb-1">
+                          <div className="text-[10px] font-bold text-rose-700 dark:text-rose-300 uppercase tracking-wider mb-1">
                             Detalle del error
                           </div>
-                          <div className="p-2.5 rounded-xl bg-rose-100/90 border border-rose-200 text-rose-900 text-xs font-mono break-words leading-relaxed">
+                          <div className="p-2.5 rounded-xl bg-rose-100/90 dark:bg-rose-950/70 border border-rose-200 dark:border-rose-800/70 text-rose-900 dark:text-rose-200 text-xs font-mono break-words leading-relaxed">
                             {log.error}
                           </div>
                         </div>
@@ -371,10 +371,10 @@ export default function DebugLogViewer({ onClose }) {
 
                       {log.response && (
                         <div>
-                          <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                          <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
                             Respuesta del servidor
                           </div>
-                          <pre className="p-2 rounded-xl bg-slate-100 text-slate-800 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap leading-tight max-h-40">
+                          <pre className="p-2 rounded-xl bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-200 border border-slate-200/70 dark:border-slate-800 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap leading-tight max-h-40">
                             {typeof log.response === 'object'
                               ? JSON.stringify(log.response, null, 2)
                               : String(log.response)}
@@ -382,7 +382,7 @@ export default function DebugLogViewer({ onClose }) {
                         </div>
                       )}
 
-                      <div className="text-[10px] text-slate-400 font-mono pt-1">
+                      <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono pt-1">
                         ID: {log.id} • ISO: {log.isoTime}
                       </div>
                     </motion.div>
@@ -394,13 +394,13 @@ export default function DebugLogViewer({ onClose }) {
         </div>
 
         {/* Footer */}
-        <div className="p-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+        <div className="p-3.5 bg-slate-50 dark:bg-slate-950/60 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
           <span>Solo activo mientras la opción DEBUG esté activada.</span>
           <Button
             variant="outline"
             size="sm"
             onClick={onClose}
-            className="h-8 rounded-xl text-xs font-semibold"
+            className="h-8 rounded-xl text-xs font-semibold dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             Cerrar
           </Button>

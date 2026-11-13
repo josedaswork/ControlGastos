@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es" class="bg-slate-50" style="background-color: #F8FAFC;">
+<html lang="es" class="bg-slate-50 dark:bg-slate-950">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/favicon.png?v=3" />
@@ -10,6 +10,26 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem('control_gastos_theme') || 'system';
+          var isDark = pref === 'dark' || (pref === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          var root = document.documentElement;
+          if (isDark) {
+            root.classList.add('dark');
+            root.style.colorScheme = 'dark';
+            var meta = document.querySelector('meta[name="theme-color"]');
+            if (meta) meta.setAttribute('content', '#090E1A');
+            var apple = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+            if (apple) apple.setAttribute('content', 'black-translucent');
+          } else {
+            root.classList.remove('dark');
+            root.style.colorScheme = 'light';
+          }
+        } catch (e) {}
+      })();
+    </script>
     <title>Control Gastos</title>
     <meta name="description" content="Aplicación de control de gastos personales y gestión presupuestaria conectada a Google Sheets." />
     <meta property="og:title" content="Control Gastos" />
@@ -17,7 +37,7 @@
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
   </head>
-  <body class="bg-slate-50 min-h-screen text-slate-900" style="background-color: #F8FAFC;">
+  <body class="bg-slate-50 dark:bg-slate-950 min-h-screen text-slate-900 dark:text-slate-100">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

@@ -215,7 +215,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={{ duration: 0.2 }}
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs touch-none overscroll-none"
+        className="fixed inset-0 bg-slate-900/40 dark:bg-black/65 backdrop-blur-xs touch-none overscroll-none"
         onClick={onClose}
         onTouchMove={(e) => e.preventDefault()}
       />
@@ -226,29 +226,29 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: '100%', opacity: 0.9 }}
         transition={{ type: 'spring', damping: 28, stiffness: 320 }}
-        className="relative z-10 w-full max-w-lg rounded-t-3xl sm:rounded-3xl bg-white border border-slate-200/90 shadow-2xl p-5 pb-8 sm:p-6 space-y-4 max-h-[85vh] flex flex-col overscroll-contain"
+        className="relative z-10 w-full max-w-lg rounded-t-3xl sm:rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl p-5 pb-8 sm:p-6 space-y-4 max-h-[85vh] flex flex-col overscroll-contain transition-colors"
       >
         {/* Mobile handle */}
-        <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto sm:hidden -mt-1 mb-1" />
+        <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full mx-auto sm:hidden -mt-1 mb-1" />
 
         {/* Modal Header */}
         <div className="flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-xs">
+            <div className="w-10 h-10 rounded-2xl bg-amber-50 dark:bg-amber-950/70 text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-xs">
               <Lock className="w-5 h-5 stroke-[2.2]" />
             </div>
             <div>
               <div className="flex items-center gap-1.5 flex-wrap">
-                <h2 className="text-base font-bold text-slate-900">Gastos Fijos</h2>
-                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100/70 text-amber-800 border border-amber-200/60">
+                <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Gastos Fijos</h2>
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100/70 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/70">
                   {month}
                 </span>
-                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/90 px-2 py-0.5 rounded-full">
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200/90 dark:border-emerald-800/70 px-2 py-0.5 rounded-full">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                   Almacenado en local
                 </span>
               </div>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 Marca la casilla para computar el gasto en el mes
               </p>
             </div>
@@ -262,9 +262,9 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
               disabled={loading || backgroundSyncing || repairing}
               title="Descargar datos de gastos fijos desde Google Sheets bajo petición"
               aria-label="Descargar gastos fijos desde Excel"
-              className="h-8 rounded-xl border-slate-200 text-slate-700 hover:bg-slate-100 flex items-center gap-1.5 px-2.5 text-xs font-semibold"
+              className="h-8 rounded-xl border-slate-200 dark:border-slate-700 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 px-2.5 text-xs font-semibold"
             >
-              <Download className={`w-3.5 h-3.5 ${(loading || backgroundSyncing) ? 'animate-bounce text-amber-600' : 'text-slate-500'}`} />
+              <Download className={`w-3.5 h-3.5 ${(loading || backgroundSyncing) ? 'animate-bounce text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'}`} />
               <span className="hidden sm:inline">{loading || backgroundSyncing ? 'Descargando...' : 'Descargar de Excel'}</span>
               <span className="sm:hidden">{loading || backgroundSyncing ? '...' : 'Descargar'}</span>
             </Button>
@@ -274,15 +274,15 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
               disabled={repairing || loading}
               title="Ajustar y reparar fórmulas con formato España (; y ,)"
               aria-label="Reparar fórmulas"
-              className="w-8 h-8 rounded-full bg-slate-100 hover:bg-amber-100 text-slate-500 hover:text-amber-700 flex items-center justify-center transition-colors disabled:opacity-50"
+              className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-amber-100 dark:hover:bg-amber-950/70 text-slate-500 dark:text-slate-300 hover:text-amber-700 dark:hover:text-amber-300 flex items-center justify-center transition-colors disabled:opacity-50"
             >
-              <Wrench className={`w-3.5 h-3.5 ${repairing ? 'animate-spin text-amber-600' : ''}`} />
+              <Wrench className={`w-3.5 h-3.5 ${repairing ? 'animate-spin text-amber-600 dark:text-amber-400' : ''}`} />
             </button>
             <button
               type="button"
               onClick={onClose}
               aria-label="Cerrar modal"
-              className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200/80 text-slate-500 hover:text-slate-700 flex items-center justify-center transition-colors"
+              className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200/80 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-slate-100 flex items-center justify-center transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
@@ -290,25 +290,25 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
         </div>
 
         {/* Total Metric Card */}
-        <div className="bg-amber-50/50 rounded-2xl p-3.5 border border-amber-200/60 shrink-0 flex items-center justify-between">
+        <div className="bg-amber-50/50 dark:bg-amber-950/35 rounded-2xl p-3.5 border border-amber-200/60 dark:border-amber-800/60 shrink-0 flex items-center justify-between">
           <div>
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-700/80 block">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-700/80 dark:text-amber-300/90 block">
               Total Fijos Aplicados
             </span>
             <div className="flex items-baseline gap-2 mt-0.5">
-              <span className="text-2xl font-bold text-slate-900">
+              <span className="text-2xl font-bold text-slate-900 dark:text-slate-100 tabular-nums">
                 {fmt(totalActiveAmount)}
               </span>
               {totalPossibleAmount > totalActiveAmount && (
-                <span className="text-xs text-slate-400 font-medium line-through">
+                <span className="text-xs text-slate-400 dark:text-slate-500 font-medium line-through tabular-nums">
                   {fmt(totalPossibleAmount)}
                 </span>
               )}
             </div>
           </div>
           <div className="text-right">
-            <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-800 bg-white px-2.5 py-1 rounded-full border border-amber-200 shadow-2xs">
-              <CheckSquare className="w-3.5 h-3.5 text-amber-600" />
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-800 dark:text-amber-300 bg-white dark:bg-slate-900 px-2.5 py-1 rounded-full border border-amber-200 dark:border-amber-800/70 shadow-2xs">
+              <CheckSquare className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
               {activeCount} de {totalItems} activos
             </span>
           </div>
@@ -316,7 +316,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
 
         {/* Quick Batch Actions */}
         {totalItems > 0 && !loading && (
-          <div className="flex items-center justify-between px-1 text-xs text-slate-500 shrink-0">
+          <div className="flex items-center justify-between px-1 text-xs text-slate-500 dark:text-slate-400 shrink-0">
             <span>Toca cualquier fila o casilla para activar/desactivar</span>
             <div className="flex gap-2">
               <button
@@ -332,7 +332,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                 type="button"
                 onClick={() => handleToggleAll(false)}
                 disabled={batchSyncing || activeCount === 0}
-                className="font-semibold text-slate-500 hover:text-slate-800 disabled:opacity-40"
+                className="font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-40"
               >
                 Desmarcar
               </button>
@@ -347,41 +347,41 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
               {[1, 2, 3, 4, 5].map((idx) => (
                 <div
                   key={idx}
-                  className="flex items-center justify-between p-3.5 rounded-2xl border border-slate-100 bg-slate-50/50 animate-pulse"
+                  className="flex items-center justify-between p-3.5 rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 animate-pulse"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-6 h-6 rounded-lg bg-slate-200" />
+                    <div className="w-6 h-6 rounded-lg bg-slate-200 dark:bg-slate-800" />
                     <div className="space-y-1.5">
-                      <div className="h-4 w-28 bg-slate-200 rounded" />
-                      <div className="h-3 w-16 bg-slate-200 rounded" />
+                      <div className="h-4 w-28 bg-slate-200 dark:bg-slate-800 rounded" />
+                      <div className="h-3 w-16 bg-slate-200 dark:bg-slate-800 rounded" />
                     </div>
                   </div>
-                  <div className="h-5 w-16 bg-slate-200 rounded" />
+                  <div className="h-5 w-16 bg-slate-200 dark:bg-slate-800 rounded" />
                 </div>
               ))}
             </div>
           ) : error ? (
             <div className="py-8 px-4 text-center space-y-3">
-              <div className="w-12 h-12 rounded-full bg-red-50 text-red-500 flex items-center justify-center mx-auto">
+              <div className="w-12 h-12 rounded-full bg-red-50 dark:bg-rose-950/60 text-red-500 dark:text-rose-400 flex items-center justify-center mx-auto">
                 <AlertCircle className="w-6 h-6" />
               </div>
-              <p className="text-xs text-red-600 font-medium">{error}</p>
+              <p className="text-xs text-red-600 dark:text-rose-400 font-medium">{error}</p>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => window.location.reload()}
-                className="rounded-xl text-xs"
+                className="rounded-xl text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
               >
                 <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Reintentar
               </Button>
             </div>
           ) : items.length === 0 ? (
             <div className="py-10 text-center space-y-2">
-              <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mx-auto">
                 <Lock className="w-6 h-6" />
               </div>
-              <p className="text-sm font-semibold text-slate-700">Sin gastos fijos</p>
-              <p className="text-xs text-slate-400 max-w-xs mx-auto">
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Sin gastos fijos</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500 max-w-xs mx-auto">
                 No se encontraron filas de gastos fijos para el mes de {month} en tu hoja de cálculo.
               </p>
             </div>
@@ -396,8 +396,8 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                   onClick={() => handleToggle(item)}
                   className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all cursor-pointer select-none ${
                     item.active
-                      ? 'bg-white hover:bg-amber-50/20 border-slate-200/90 shadow-2xs'
-                      : 'bg-slate-50/70 hover:bg-slate-100/60 border-slate-200/50 opacity-75'
+                      ? 'bg-white dark:bg-slate-950/60 hover:bg-amber-50/20 dark:hover:bg-amber-950/30 border-slate-200/90 dark:border-slate-800 shadow-2xs'
+                      : 'bg-slate-50/70 dark:bg-slate-950/30 hover:bg-slate-100/60 dark:hover:bg-slate-800/50 border-slate-200/50 dark:border-slate-800/60 opacity-75'
                   }`}
                 >
                   {/* Left: Checkbox & Name */}
@@ -408,7 +408,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                       className={`w-7 h-7 rounded-xl flex items-center justify-center transition-all shrink-0 ${
                         item.active
                           ? 'bg-amber-500 border-2 border-amber-500 text-white shadow-xs'
-                          : 'bg-white border-2 border-slate-300 text-transparent hover:border-amber-400'
+                          : 'bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-700 text-transparent hover:border-amber-400'
                       }`}
                     >
                       {item.active && (
@@ -426,18 +426,18 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <p
                           className={`text-sm font-semibold truncate ${
-                            item.active ? 'text-slate-900' : 'text-slate-500'
+                            item.active ? 'text-slate-900 dark:text-slate-100' : 'text-slate-500 dark:text-slate-400'
                           }`}
                         >
                           {item.category}
                         </p>
                         {pendingRowTasks.has(item.row) && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 border border-amber-200/90 shrink-0">
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 border border-amber-200/90 dark:border-amber-800/70 shrink-0">
                             📦 Pendiente Push
                           </span>
                         )}
                       </div>
-                      <span className="text-[11px] font-medium text-slate-400">
+                      <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
                         {item.active ? 'Aplicado este mes' : 'No contabilizado'}
                       </span>
                     </div>
@@ -455,18 +455,18 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                         handleOpenEdit(item)
                       }}
                       aria-label={`Editar importe de ${item.category}: ${fmt(item.amount)}`}
-                      className="group/amt flex items-center gap-1.5 py-1 px-2 -mr-1 rounded-xl hover:bg-amber-50 active:bg-amber-100/70 border border-transparent hover:border-amber-200/60 transition-all cursor-pointer"
+                      className="group/amt flex items-center gap-1.5 py-1 px-2 -mr-1 rounded-xl hover:bg-amber-50 dark:hover:bg-amber-950/50 active:bg-amber-100/70 dark:active:bg-amber-900/50 border border-transparent hover:border-amber-200/60 dark:hover:border-amber-800/60 transition-all cursor-pointer"
                     >
                       <span
-                        className={`text-base font-bold transition-colors ${
+                        className={`text-base font-bold transition-colors tabular-nums ${
                           item.active
-                            ? 'text-slate-900 group-hover/amt:text-amber-700'
-                            : 'text-slate-400 line-through group-hover/amt:text-slate-600'
+                            ? 'text-slate-900 dark:text-slate-100 group-hover/amt:text-amber-700 dark:group-hover/amt:text-amber-300'
+                            : 'text-slate-400 dark:text-slate-500 line-through group-hover/amt:text-slate-600 dark:group-hover/amt:text-slate-300'
                         }`}
                       >
                         {fmt(item.amount)}
                       </span>
-                      <span className="w-6 h-6 rounded-lg bg-slate-100 group-hover/amt:bg-amber-100/80 text-slate-400 group-hover/amt:text-amber-700 flex items-center justify-center transition-colors">
+                      <span className="w-6 h-6 rounded-lg bg-slate-100 dark:bg-slate-800 group-hover/amt:bg-amber-100/80 dark:group-hover/amt:bg-amber-950/70 text-slate-400 dark:text-slate-400 group-hover/amt:text-amber-700 dark:group-hover/amt:text-amber-300 flex items-center justify-center transition-colors">
                         <Pencil className="w-3 h-3" />
                       </span>
                     </button>
@@ -482,7 +482,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
           <Button
             type="button"
             onClick={onClose}
-            className="w-full h-11 rounded-xl text-sm font-semibold bg-slate-900 hover:bg-slate-800 text-white shadow-xs"
+            className="w-full h-11 rounded-xl text-sm font-semibold bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 text-white shadow-xs"
           >
             Listo
           </Button>
@@ -498,7 +498,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
-              className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs"
+              className="fixed inset-0 bg-slate-900/50 dark:bg-black/70 backdrop-blur-xs"
               onClick={() => !savingAmount && setEditingItem(null)}
             />
             <motion.div
@@ -506,16 +506,16 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 15 }}
               transition={{ type: 'spring', damping: 25, stiffness: 350 }}
-              className="relative z-10 w-full max-w-sm rounded-3xl bg-white border border-slate-200/90 shadow-2xl p-5 space-y-4"
+              className="relative z-10 w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl p-5 space-y-4"
             >
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-xs">
+                  <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/70 text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-xs">
                     <Pencil className="w-4 h-4" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900">Editar Gasto Fijo</h3>
-                    <p className="text-[11px] text-slate-400">Modifica el importe base para {month}</p>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Editar Gasto Fijo</h3>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-400">Modifica el importe base para {month}</p>
                   </div>
                 </div>
                 <button
@@ -523,7 +523,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                   disabled={savingAmount}
                   onClick={() => setEditingItem(null)}
                   aria-label="Cerrar edición"
-                  className="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors disabled:opacity-50"
+                  className="w-7 h-7 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300 flex items-center justify-center transition-colors disabled:opacity-50"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -531,7 +531,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
 
               <form onSubmit={handleSaveAmount} className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-600 block">
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 block">
                     Concepto / Categoría
                   </label>
                   <Input
@@ -539,13 +539,13 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                     value={editCategory}
                     onChange={(e) => setEditCategory(e.target.value)}
                     placeholder="Ej. Alquiler, Spotify..."
-                    className="h-10 rounded-xl text-sm"
+                    className="h-10 rounded-xl text-sm dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-100"
                     disabled={savingAmount}
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-600 block">
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 block">
                     Importe (€)
                   </label>
                   <div className="relative">
@@ -557,14 +557,14 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                       value={editAmount}
                       onChange={(e) => setEditAmount(e.target.value)}
                       placeholder="0.00"
-                      className="h-12 pl-3.5 pr-8 rounded-xl text-lg font-bold text-slate-900"
+                      className="h-12 pl-3.5 pr-8 rounded-xl text-lg font-bold text-slate-900 dark:text-slate-100 dark:bg-slate-950/70 dark:border-slate-800"
                       disabled={savingAmount}
                     />
-                    <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">
+                    <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400 dark:text-slate-500">
                       €
                     </span>
                   </div>
-                  <p className="text-[10px] text-slate-500 font-mono pt-1">
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono pt-1">
                     Fórmula en Columna F: =IF(G{editingItem?.row}; {String(editAmount || '0').replace('.', ',')}; 0)
                   </p>
                 </div>
@@ -580,7 +580,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                         const curr = parseFloat(String(editAmount).replace(',', '.')) || 0
                         setEditAmount(String(+(curr + adj).toFixed(2)))
                       }}
-                      className="flex-1 py-1.5 px-2 rounded-xl bg-slate-100 hover:bg-amber-50 hover:text-amber-700 text-slate-600 text-xs font-semibold transition-colors"
+                      className="flex-1 py-1.5 px-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-amber-950/60 hover:text-amber-700 dark:hover:text-amber-300 text-slate-600 dark:text-slate-300 text-xs font-semibold transition-colors"
                     >
                       +{adj}€
                     </button>
@@ -591,7 +591,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                     onClick={() => {
                       setEditAmount(String(editingItem.amount || 0))
                     }}
-                    className="py-1.5 px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 text-xs font-medium transition-colors"
+                    className="py-1.5 px-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300 text-xs font-medium transition-colors"
                     title="Restablecer importe original"
                   >
                     Reset
@@ -604,7 +604,7 @@ export default function FixedExpensesModal({ month, currentFixedTotal = 0, onSum
                     variant="outline"
                     disabled={savingAmount}
                     onClick={() => setEditingItem(null)}
-                    className="flex-1 h-10 rounded-xl text-xs font-semibold"
+                    className="flex-1 h-10 rounded-xl text-xs font-semibold dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200 dark:hover:bg-slate-800"
                   >
                     Cancelar
                   </Button>

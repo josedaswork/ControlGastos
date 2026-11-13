@@ -40,7 +40,7 @@ export default function EditSavingsGoalModal({ month, currentGoal = 0, onSave, o
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={{ duration: 0.2 }}
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs touch-none overscroll-none"
+        className="fixed inset-0 bg-slate-900/40 dark:bg-black/65 backdrop-blur-xs touch-none overscroll-none"
         onClick={onClose}
         onTouchMove={(e) => e.preventDefault()}
       />
@@ -51,27 +51,27 @@ export default function EditSavingsGoalModal({ month, currentGoal = 0, onSave, o
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: '100%', opacity: 0.9 }}
         transition={{ type: 'spring', damping: 28, stiffness: 320 }}
-        className="relative z-10 w-full max-w-md rounded-t-3xl sm:rounded-3xl bg-white border border-slate-200/90 shadow-2xl p-5 pb-8 sm:p-6 space-y-5 overscroll-contain"
+        className="relative z-10 w-full max-w-md rounded-t-3xl sm:rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl p-5 pb-8 sm:p-6 space-y-5 overscroll-contain transition-colors"
       >
         {/* Handle bar for bottom sheet */}
-        <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto sm:hidden -mt-1 mb-2" />
+        <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full mx-auto sm:hidden -mt-1 mb-2" />
 
         {/* Modal Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-xs">
+            <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 flex items-center justify-center shadow-xs">
               <Target className="w-5 h-5 stroke-[2.2]" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900">Meta de Ahorro</h2>
-              <p className="text-xs font-medium text-slate-500">Mes de {month}</p>
+              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Meta de Ahorro</h2>
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Mes de {month}</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Cerrar"
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200/80 text-slate-500 flex items-center justify-center transition-colors"
+            className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200/80 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300 flex items-center justify-center transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -80,7 +80,7 @@ export default function EditSavingsGoalModal({ month, currentGoal = 0, onSave, o
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
+            <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2">
               Cantidad que vas a ahorrar (€)
             </label>
             <div className="relative">
@@ -92,14 +92,14 @@ export default function EditSavingsGoalModal({ month, currentGoal = 0, onSave, o
                 placeholder="0.00"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                className="h-14 pl-11 pr-4 text-xl font-bold bg-slate-50/70 border-slate-200 rounded-2xl focus:bg-white text-slate-900 transition-all"
+                className="h-14 pl-11 pr-4 text-xl font-bold bg-slate-50/70 dark:bg-slate-950/70 border-slate-200 dark:border-slate-800 rounded-2xl focus:bg-white dark:focus:bg-slate-950 text-slate-900 dark:text-slate-100 transition-all"
               />
-              <Euro className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-blue-600" />
+              <Euro className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-blue-600 dark:text-blue-400" />
             </div>
 
             {/* Quick Adjustment Chips */}
             <div className="flex items-center gap-1.5 mt-2.5 overflow-x-auto py-0.5 no-scrollbar">
-              <span className="text-[11px] font-semibold text-slate-400 whitespace-nowrap mr-0.5">
+              <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 whitespace-nowrap mr-0.5">
                 Rápido:
               </span>
               {[25, 50, 100, 200].map((extra) => (
@@ -107,7 +107,7 @@ export default function EditSavingsGoalModal({ month, currentGoal = 0, onSave, o
                   key={extra}
                   type="button"
                   onClick={() => handleQuickAdd(extra)}
-                  className="text-xs font-semibold px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-slate-700 border border-slate-200/60 transition-colors whitespace-nowrap active:scale-95"
+                  className="text-xs font-semibold px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-950/60 hover:text-blue-700 dark:hover:text-blue-300 text-slate-700 dark:text-slate-200 border border-slate-200/60 dark:border-slate-700 transition-colors whitespace-nowrap active:scale-95"
                 >
                   +{extra}€
                 </button>
@@ -116,7 +116,7 @@ export default function EditSavingsGoalModal({ month, currentGoal = 0, onSave, o
                 <button
                   type="button"
                   onClick={() => setAmount('')}
-                  className="text-xs font-semibold px-2 py-1 rounded-xl bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors active:scale-95"
+                  className="text-xs font-semibold px-2 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors active:scale-95"
                 >
                   Borrar
                 </button>
@@ -124,8 +124,8 @@ export default function EditSavingsGoalModal({ month, currentGoal = 0, onSave, o
             </div>
           </div>
 
-          <p className="text-xs text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-100 leading-relaxed">
-            Se registrará en la casilla de ahorro mensual de <strong>{month}</strong>. El dinero restante disponible se recalculará automáticamente.
+          <p className="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-950/60 p-3 rounded-xl border border-slate-100 dark:border-slate-800 leading-relaxed">
+            Se registrará en la casilla de ahorro mensual de <strong className="text-slate-700 dark:text-slate-200">{month}</strong>. El dinero restante disponible se recalculará automáticamente.
           </p>
 
           {/* Action Buttons */}
@@ -134,7 +134,7 @@ export default function EditSavingsGoalModal({ month, currentGoal = 0, onSave, o
               type="button"
               variant="outline"
               onClick={onClose}
-              className="flex-1 h-12 rounded-xl text-sm font-semibold border-slate-200 text-slate-700 hover:bg-slate-50"
+              className="flex-1 h-12 rounded-xl text-sm font-semibold border-slate-200 dark:border-slate-700 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
             >
               Cancelar
             </Button>

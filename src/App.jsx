@@ -11,6 +11,8 @@ import {
   Bug,
   UploadCloud,
   Download,
+  Sun,
+  Moon,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Button } from '@/components/ui/button'
@@ -75,8 +77,10 @@ import {
   setMonthFinalized,
   getEffectiveCurrentMonth,
 } from '@/lib/monthStatus'
+import { useTheme } from '@/lib/theme'
 
 function App() {
+  const { isDark, toggleTheme } = useTheme()
   const [scriptUrl, setScriptUrl] = useState(getScriptUrl())
   const [spreadsheetUrl, setSpreadsheetUrl] = useState(() => getSpreadsheetUrl())
   const [showSetup, setShowSetup] = useState(!scriptUrl)
@@ -556,27 +560,27 @@ function App() {
           onClose={scriptUrl ? () => setShowSetup(false) : undefined}
           initialUrl={scriptUrl}
         />
-        <Toaster position="top-center" theme="light" />
+        <Toaster position="top-center" theme={isDark ? 'dark' : 'light'} richColors />
       </>
     )
   }
 
   return (
-    <div className="w-full min-h-screen bg-slate-50 sm:bg-slate-100 flex justify-center">
+    <div className="w-full min-h-screen bg-slate-50 dark:bg-slate-950 sm:bg-slate-100 sm:dark:bg-slate-950 flex justify-center transition-colors">
       {/* Google Pixel 10 Phone Frame Container */}
-      <div className="w-full max-w-md min-h-screen bg-slate-50 flex flex-col relative overflow-x-hidden shadow-sm">
+      <div className="w-full max-w-md min-h-screen bg-slate-50 dark:bg-slate-950 sm:dark:border-x sm:dark:border-slate-800/70 flex flex-col relative overflow-x-hidden shadow-sm transition-colors">
         {/* Top App Bar con margen superior para no solaparse con la hora y barra de notificaciones */}
         <header
-          className="px-4 pb-2 flex items-center justify-between bg-slate-50 shrink-0"
+          className="px-4 pb-2 flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-950 shrink-0 transition-colors"
           style={{
             paddingTop: 'max(calc(env(safe-area-inset-top, 0px) + 10px), 36px)',
           }}
         >
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
             <motion.div
               whileHover={{ rotate: 4, scale: 1.05 }}
               whileTap={{ scale: 0.92 }}
-              className="w-10 h-10 rounded-2xl overflow-hidden shadow-xs shadow-blue-500/20 shrink-0 border border-slate-200/80 bg-white"
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl overflow-hidden shadow-xs shadow-blue-500/20 shrink-0 border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900"
             >
               <img
                 src="/icon-192.png"
@@ -585,24 +589,24 @@ function App() {
                 referrerPolicy="no-referrer"
               />
             </motion.div>
-            <div>
-              <h1 className="text-lg font-black tracking-tight text-slate-900 leading-tight">
+            <div className="min-w-0">
+              <h1 className="text-base sm:text-lg font-black tracking-tight text-slate-900 dark:text-slate-100 leading-tight truncate">
                 Control Gastos
               </h1>
               <div className="flex items-center gap-1.5 flex-wrap">
                 <button
                   type="button"
                   onClick={() => setFinalizeModalMonth(selectedMonth)}
-                  className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 hover:text-slate-800 transition-colors group cursor-pointer"
+                  className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors group cursor-pointer"
                   title="Haz clic para ver opciones o finalizar este mes"
                 >
                   <span>{monthName} 2026</span>
                   {finalizedMonths.includes(selectedMonth) ? (
-                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded-full border border-emerald-300">
+                    <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/70 px-1.5 py-0.2 rounded-full border border-emerald-300 dark:border-emerald-800/70">
                       ✓ Finalizado
                     </span>
                   ) : selectedMonth === effectiveCurrentMonth ? (
-                    <span className="text-[10px] font-semibold text-primary bg-primary/10 px-1.5 py-0.2 rounded-full">
+                    <span className="text-[10px] font-semibold text-primary bg-primary/10 dark:bg-primary/20 px-1.5 py-0.2 rounded-full">
                       En curso
                     </span>
                   ) : null}
@@ -615,9 +619,9 @@ function App() {
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.85 }}
                       title="Mostrando datos de la memoria caché mientras se sincroniza con Google Sheets"
-                      className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/90 px-2 py-0.5 rounded-full shadow-2xs"
+                      className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200/90 dark:border-amber-800/70 px-2 py-0.5 rounded-full shadow-2xs"
                     >
-                      <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-600" />
+                      <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-600 dark:text-amber-400" />
                       <span>datos cacheados</span>
                     </motion.div>
                   )}
@@ -626,7 +630,7 @@ function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             {/* Push Changes Button */}
             <motion.button
               type="button"
@@ -641,19 +645,19 @@ function App() {
                   ? `${pushQueue.length} cambio(s) pendiente(s) de subir al Excel (Push)`
                   : 'Cola de Push: Sin cambios pendientes'
               }
-              className={`relative w-10 h-10 rounded-2xl border shadow-xs flex items-center justify-center transition-all ${
+              className={`relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl border shadow-xs flex items-center justify-center transition-all ${
                 pushQueue.length > 0
                   ? 'bg-blue-600 border-blue-500 text-white shadow-blue-500/25 ring-2 ring-blue-400/30'
-                  : 'bg-white border-slate-200/80 text-slate-600 hover:bg-slate-50'
+                  : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
               }`}
             >
-              <UploadCloud className={`h-4.5 w-4.5 ${quickPushing ? 'animate-bounce' : ''}`} />
+              <UploadCloud className={`h-4 w-4 sm:h-4.5 sm:w-4.5 ${quickPushing ? 'animate-bounce' : ''}`} />
               {pushQueue.length > 0 && (
                 <motion.span
                   initial={{ scale: 0 }}
                   animate={{ scale: [1, 1.25, 1] }}
                   transition={{ duration: 0.3 }}
-                  className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center shadow-xs ring-2 ring-white"
+                  className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center shadow-xs ring-2 ring-white dark:ring-slate-950"
                 >
                   {pushQueue.length}
                 </motion.span>
@@ -668,9 +672,9 @@ function App() {
               whileTap={{ scale: 0.88 }}
               aria-label="Descargar TODO del Excel"
               title={`Descargar TODO del Excel (${monthName}, meses colindantes, casillas y Panel de Control)`}
-              className="relative w-10 h-10 rounded-2xl bg-white border border-slate-200/80 shadow-xs hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors disabled:opacity-50"
+              className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 transition-colors disabled:opacity-50"
             >
-              <Download className={`h-4.5 w-4.5 ${pulling ? 'animate-bounce text-primary' : ''}`} />
+              <Download className={`h-4 w-4 sm:h-4.5 sm:w-4.5 ${pulling ? 'animate-bounce text-primary' : ''}`} />
             </motion.button>
 
             {/* Spreadsheet Link Button */}
@@ -684,9 +688,9 @@ function App() {
               }}
               aria-label="Abrir hoja de cálculo en Google Sheets"
               title="Abrir hoja de cálculo en Google Sheets"
-              className="w-10 h-10 rounded-2xl bg-white border border-slate-200/80 shadow-xs hover:bg-slate-50 flex items-center justify-center text-slate-600 hover:text-emerald-700 transition-colors"
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:text-emerald-700 dark:hover:text-emerald-400 transition-colors"
             >
-              <ArrowUpRight className="h-4.5 w-4.5" />
+              <ArrowUpRight className="h-4 w-4 sm:h-4.5 sm:w-4.5" />
             </motion.a>
 
             {/* Quick Debug Button (Only if DEBUG is enabled in settings) */}
@@ -700,7 +704,7 @@ function App() {
                 whileTap={{ scale: 0.88 }}
                 aria-label="Ver registros de tareas (DEBUG)"
                 title="Modo DEBUG activo: ver registro de tareas y errores"
-                className="relative w-10 h-10 rounded-2xl bg-violet-50 border border-violet-200/80 shadow-xs hover:bg-violet-100 flex items-center justify-center text-violet-700 transition-colors"
+                className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-violet-50 dark:bg-violet-950/60 border border-violet-200/80 dark:border-violet-800/70 shadow-xs hover:bg-violet-100 dark:hover:bg-violet-900/60 flex items-center justify-center text-violet-700 dark:text-violet-300 transition-colors"
               >
                 <Bug className="h-4 w-4" />
                 {debugErrorCount > 0 ? (
@@ -708,10 +712,25 @@ function App() {
                     {debugErrorCount}
                   </span>
                 ) : (
-                  <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white" />
+                  <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-950" />
                 )}
               </motion.button>
             )}
+
+            {/* Theme Toggle Button */}
+            <motion.button
+              type="button"
+              onClick={() => {
+                Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+                toggleTheme()
+              }}
+              whileTap={{ scale: 0.88, rotate: isDark ? 20 : -20 }}
+              aria-label={isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+              title={isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-amber-300 transition-colors"
+            >
+              {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </motion.button>
 
             {/* Settings Button */}
             <motion.button
@@ -722,7 +741,7 @@ function App() {
               }}
               whileTap={{ scale: 0.88, rotate: 25 }}
               aria-label="Configurar Google Apps Script"
-              className="w-10 h-10 rounded-2xl bg-white border border-slate-200/80 shadow-xs hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors"
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 transition-colors"
             >
               <Settings className="h-4 w-4" />
             </motion.button>
@@ -751,7 +770,7 @@ function App() {
         {/* Expense List Section */}
         <main className="flex-1 px-4 pb-28">
           <div className="flex items-center justify-between mb-2.5">
-            <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
               Gastos Variables
             </h2>
             {summary?.variableExpenses > 0 && (
@@ -759,7 +778,7 @@ function App() {
                 layout
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="text-xs font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-100"
+                className="text-xs font-semibold text-rose-600 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/60 px-2 py-0.5 rounded-md border border-rose-100 dark:border-rose-800/60"
               >
                 {fmt(summary.variableExpenses)}
               </motion.span>
@@ -786,7 +805,7 @@ function App() {
               transition={{ type: 'spring', damping: 25, stiffness: 350 }}
               className="fixed bottom-6 left-4 right-22 max-w-sm z-40"
             >
-              <div className="bg-slate-900/95 backdrop-blur-md text-white rounded-2xl p-2 pl-3 pr-2 shadow-xl shadow-slate-900/30 border border-slate-700/80 flex items-center justify-between gap-2">
+              <div className="bg-slate-900/95 dark:bg-slate-800/95 backdrop-blur-md text-white rounded-2xl p-2 pl-3 pr-2 shadow-xl shadow-slate-900/30 dark:shadow-black/50 border border-slate-700/80 dark:border-slate-600/80 flex items-center justify-between gap-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -936,7 +955,7 @@ function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs touch-none overscroll-none"
+              className="absolute inset-0 bg-slate-900/40 dark:bg-black/65 backdrop-blur-xs touch-none overscroll-none"
               onTouchMove={(e) => e.preventDefault()}
             />
 
@@ -946,23 +965,23 @@ function App() {
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 15 }}
               transition={{ type: 'spring', stiffness: 400, damping: 28 }}
-              className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-200/80 z-10"
+              className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-200/80 dark:border-slate-800 z-10"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="w-11 h-11 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center mb-3">
+              <div className="w-11 h-11 rounded-2xl bg-red-50 dark:bg-red-950/60 text-red-600 dark:text-red-400 flex items-center justify-center mb-3">
                 <AlertTriangle className="w-5 h-5" />
               </div>
-              <h3 className="text-lg font-bold text-slate-900 mb-1">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-1">
                 ¿Eliminar este gasto?
               </h3>
-              <p className="text-xs text-slate-500 mb-5 leading-relaxed">
-                Se eliminará <span className="font-bold text-slate-800">{deletingExpense.category}</span> por un importe de <span className="font-bold text-slate-900">{fmt(deletingExpense.amount)}</span> de tu Google Spreadsheet.
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-5 leading-relaxed">
+                Se eliminará <span className="font-bold text-slate-800 dark:text-slate-200">{deletingExpense.category}</span> por un importe de <span className="font-bold text-slate-900 dark:text-slate-100">{fmt(deletingExpense.amount)}</span> de tu Google Spreadsheet.
               </p>
               <div className="flex gap-2.5 justify-end">
                 <motion.div whileTap={{ scale: 0.93 }}>
                   <Button
                     variant="outline"
-                    className="h-11 rounded-xl text-xs font-semibold border-slate-200 text-slate-700 hover:bg-slate-100"
+                    className="h-11 rounded-xl text-xs font-semibold border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800/60"
                     onClick={() => setDeletingExpense(null)}
                   >
                     Cancelar
@@ -1006,7 +1025,7 @@ function App() {
         <DebugLogViewer onClose={() => setShowDebugModal(false)} />
       )}
 
-      <Toaster position="top-center" theme="light" richColors />
+      <Toaster position="top-center" theme={isDark ? 'dark' : 'light'} richColors />
     </div>
   )
 }

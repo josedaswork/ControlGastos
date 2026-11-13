@@ -5,16 +5,16 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { fmt } from '@/lib/utils'
 
 const THEME_PALETTES = [
-  { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-200/60' },
-  { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200/60' },
-  { bg: 'bg-purple-100', text: 'text-purple-700', border: 'border-purple-200/60' },
-  { bg: 'bg-amber-100', text: 'text-amber-800', border: 'border-amber-200/60' },
-  { bg: 'bg-rose-100', text: 'text-rose-700', border: 'border-rose-200/60' },
-  { bg: 'bg-cyan-100', text: 'text-cyan-700', border: 'border-cyan-200/60' },
-  { bg: 'bg-indigo-100', text: 'text-indigo-700', border: 'border-indigo-200/60' },
-  { bg: 'bg-teal-100', text: 'text-teal-700', border: 'border-teal-200/60' },
-  { bg: 'bg-orange-100', text: 'text-orange-800', border: 'border-orange-200/60' },
-  { bg: 'bg-fuchsia-100', text: 'text-fuchsia-700', border: 'border-fuchsia-200/60' },
+  { bg: 'bg-blue-100 dark:bg-blue-950/70', text: 'text-blue-700 dark:text-blue-300', border: 'border-blue-200/60 dark:border-blue-800/60' },
+  { bg: 'bg-emerald-100 dark:bg-emerald-950/70', text: 'text-emerald-700 dark:text-emerald-300', border: 'border-emerald-200/60 dark:border-emerald-800/60' },
+  { bg: 'bg-purple-100 dark:bg-purple-950/70', text: 'text-purple-700 dark:text-purple-300', border: 'border-purple-200/60 dark:border-purple-800/60' },
+  { bg: 'bg-amber-100 dark:bg-amber-950/70', text: 'text-amber-800 dark:text-amber-300', border: 'border-amber-200/60 dark:border-amber-800/60' },
+  { bg: 'bg-rose-100 dark:bg-rose-950/70', text: 'text-rose-700 dark:text-rose-300', border: 'border-rose-200/60 dark:border-rose-800/60' },
+  { bg: 'bg-cyan-100 dark:bg-cyan-950/70', text: 'text-cyan-700 dark:text-cyan-300', border: 'border-cyan-200/60 dark:border-cyan-800/60' },
+  { bg: 'bg-indigo-100 dark:bg-indigo-950/70', text: 'text-indigo-700 dark:text-indigo-300', border: 'border-indigo-200/60 dark:border-indigo-800/60' },
+  { bg: 'bg-teal-100 dark:bg-teal-950/70', text: 'text-teal-700 dark:text-teal-300', border: 'border-teal-200/60 dark:border-teal-800/60' },
+  { bg: 'bg-orange-100 dark:bg-orange-950/70', text: 'text-orange-800 dark:text-orange-300', border: 'border-orange-200/60 dark:border-orange-800/60' },
+  { bg: 'bg-fuchsia-100 dark:bg-fuchsia-950/70', text: 'text-fuchsia-700 dark:text-fuchsia-300', border: 'border-fuchsia-200/60 dark:border-fuchsia-800/60' },
 ]
 
 function getCategoryColor(str = '') {
@@ -35,13 +35,13 @@ export default function ExpenseList({ expenses, loading, pending = [], sending =
     return (
       <div className="space-y-2.5">
         {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="bg-white rounded-2xl p-3.5 flex items-center gap-3 border border-slate-200/80 shadow-xs">
-            <div className="w-11 h-11 rounded-2xl bg-slate-100 animate-pulse" />
+          <div key={i} className="bg-white dark:bg-slate-900 rounded-2xl p-3.5 flex items-center gap-3 border border-slate-200/80 dark:border-slate-800 shadow-xs">
+            <div className="w-11 h-11 rounded-2xl bg-slate-100 dark:bg-slate-800 animate-pulse" />
             <div className="flex-1 space-y-1.5">
-              <div className="h-4 w-28 bg-slate-100 rounded animate-pulse" />
-              <div className="h-3 w-16 bg-slate-100 rounded animate-pulse" />
+              <div className="h-4 w-28 bg-slate-100 dark:bg-slate-800 rounded animate-pulse" />
+              <div className="h-3 w-16 bg-slate-100 dark:bg-slate-800 rounded animate-pulse" />
             </div>
-            <div className="h-5 w-16 bg-slate-100 rounded animate-pulse" />
+            <div className="h-5 w-16 bg-slate-100 dark:bg-slate-800 rounded animate-pulse" />
           </div>
         ))}
       </div>
@@ -54,13 +54,13 @@ export default function ExpenseList({ expenses, loading, pending = [], sending =
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.25 }}
-        className="bg-white rounded-2xl p-8 text-center border border-slate-200/80 shadow-xs my-2"
+        className="bg-white dark:bg-slate-900 rounded-2xl p-8 text-center border border-slate-200/80 dark:border-slate-800 shadow-xs my-2"
       >
-        <div className="w-12 h-12 rounded-2xl bg-slate-50 text-slate-400 mx-auto flex items-center justify-center text-xl mb-3">
+        <div className="w-12 h-12 rounded-2xl bg-slate-50 dark:bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xl mb-3">
           🧾
         </div>
-        <p className="text-sm font-semibold text-slate-800">No hay gastos variables este mes</p>
-        <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
+        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">No hay gastos variables este mes</p>
+        <p className="text-xs text-slate-400 dark:text-slate-400 mt-1 max-w-xs mx-auto">
           Toca el botón + para registrar compras del supermercado, ocio, transporte o cualquier gasto.
         </p>
       </motion.div>
@@ -73,14 +73,14 @@ export default function ExpenseList({ expenses, loading, pending = [], sending =
     <div className="space-y-2.5">
       {expenses.length > 1 && (
         <div className="flex items-center justify-between pb-1">
-          <span className="text-xs font-semibold text-slate-500">
+          <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
             {expenses.length} {expenses.length === 1 ? 'registro' : 'registros'}
           </span>
           <motion.button
             type="button"
             whileTap={{ scale: 0.92 }}
             onClick={handleToggleOrder}
-            className="flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200/80 shadow-xs transition-colors"
+            className="flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded-lg border border-slate-200/80 dark:border-slate-800 shadow-xs transition-colors"
           >
             <ArrowUpDown className="h-3 w-3 text-primary" />
             {reversed ? 'Recientes primero' : 'Antiguos primero'}
@@ -99,7 +99,7 @@ export default function ExpenseList({ expenses, loading, pending = [], sending =
               initial={{ opacity: 0, y: -15, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
-              className="bg-white/90 rounded-2xl p-3.5 flex items-center gap-3 border border-dashed border-primary/50 shadow-xs"
+              className="bg-white/90 dark:bg-slate-900/90 rounded-2xl p-3.5 flex items-center gap-3 border border-dashed border-primary/50 shadow-xs"
             >
               <div
                 className={`w-11 h-11 rounded-2xl ${color.bg} ${color.text} flex items-center justify-center font-bold text-sm border ${color.border}`}
@@ -107,7 +107,7 @@ export default function ExpenseList({ expenses, loading, pending = [], sending =
                 {exp.category.charAt(0).toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-slate-800 truncate">
+                <p className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">
                   {exp.category}
                 </p>
                 <p className="text-[11px] text-primary font-medium flex items-center gap-1 mt-0.5 animate-pulse">
@@ -115,7 +115,7 @@ export default function ExpenseList({ expenses, loading, pending = [], sending =
                   Enviando a Sheets...
                 </p>
               </div>
-              <p className="text-sm font-bold text-slate-900 whitespace-nowrap">
+              <p className="text-sm font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap tabular-nums">
                 {fmt(exp.amount)}
               </p>
             </motion.div>
@@ -134,7 +134,7 @@ export default function ExpenseList({ expenses, loading, pending = [], sending =
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-amber-50/40 rounded-2xl p-3.5 flex items-center gap-3 border border-dashed border-amber-300 shadow-xs"
+              className="bg-amber-50/40 dark:bg-amber-950/30 rounded-2xl p-3.5 flex items-center gap-3 border border-dashed border-amber-300 dark:border-amber-700/70 shadow-xs"
             >
               <div
                 className={`w-11 h-11 rounded-2xl ${color.bg} ${color.text} flex items-center justify-center font-bold text-sm border ${color.border}`}
@@ -142,15 +142,15 @@ export default function ExpenseList({ expenses, loading, pending = [], sending =
                 {exp.category.charAt(0).toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-slate-800 truncate">
+                <p className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">
                   {exp.category}
                 </p>
-                <p className="text-[11px] text-amber-700 font-medium flex items-center gap-1 mt-0.5">
+                <p className="text-[11px] text-amber-700 dark:text-amber-300 font-medium flex items-center gap-1 mt-0.5">
                   <Clock className="w-3 h-3" />
                   Pendiente de sync
                 </p>
               </div>
-              <p className="text-sm font-bold text-slate-900 whitespace-nowrap">
+              <p className="text-sm font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap tabular-nums">
                 {fmt(exp.amount)}
               </p>
             </motion.div>
@@ -244,7 +244,7 @@ function SwipeableRow({ expense, onEdit, onDelete }) {
   return (
     <div className="relative overflow-hidden rounded-2xl group shadow-xs">
       {/* Delete button behind row */}
-      <div className="absolute inset-y-0 right-0 flex items-center justify-end z-0 w-full bg-red-50 rounded-2xl">
+      <div className="absolute inset-y-0 right-0 flex items-center justify-end z-0 w-full bg-red-50 dark:bg-red-950/50 rounded-2xl">
         <motion.button
           type="button"
           whileTap={{ scale: 0.9 }}
@@ -260,7 +260,7 @@ function SwipeableRow({ expense, onEdit, onDelete }) {
       <motion.div
         ref={rowRef}
         whileTap={{ scale: 0.985 }}
-        className="bg-white rounded-2xl p-3.5 flex items-center gap-3 cursor-pointer border border-slate-200/80 hover:border-slate-300 transition-colors relative z-10"
+        className="bg-white dark:bg-slate-900 rounded-2xl p-3.5 flex items-center gap-3 cursor-pointer border border-slate-200/80 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors relative z-10"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -274,23 +274,23 @@ function SwipeableRow({ expense, onEdit, onDelete }) {
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <p className="text-sm font-semibold text-slate-800 truncate">
+            <p className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">
               {expense.category}
             </p>
             {expense.isLocal && (
-              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 border border-amber-200/90">
+              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 border border-amber-200/90 dark:border-amber-800/70">
                 📦 En local
               </span>
             )}
           </div>
-          <p className="text-[11px] text-slate-400">Toca para editar</p>
+          <p className="text-[11px] text-slate-400 dark:text-slate-500">Toca para editar</p>
         </div>
 
         <div className="flex items-center gap-1 flex-shrink-0">
-          <span className="text-sm font-bold text-slate-900 whitespace-nowrap">
+          <span className="text-sm font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap tabular-nums">
             {fmt(expense.amount)}
           </span>
-          <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 transition-colors" />
+          <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 group-hover:text-slate-500 dark:group-hover:text-slate-400 transition-colors" />
         </div>
       </motion.div>
     </div>

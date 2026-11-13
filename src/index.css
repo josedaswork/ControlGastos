@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 @config "../tailwind.config.js";
 
 @layer base {
@@ -29,6 +30,33 @@
     --chart-4: 262 83% 58%;
     --chart-5: 0 84% 60%;
   }
+
+  .dark {
+    --background: 222 47% 7%;
+    --foreground: 210 40% 96%;
+    --card: 222 47% 11%;
+    --card-foreground: 210 40% 96%;
+    --popover: 222 47% 11%;
+    --popover-foreground: 210 40% 96%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 33% 19%;
+    --accent-foreground: 210 40% 96%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 217 33% 20%;
+    --input: 217 33% 22%;
+    --ring: 217 91% 60%;
+    --chart-1: 217 91% 60%;
+    --chart-2: 158 64% 52%;
+    --chart-3: 38 92% 56%;
+    --chart-4: 262 83% 68%;
+    --chart-5: 0 84% 64%;
+  }
 }
 
 @layer base {
@@ -42,11 +70,18 @@
     color-scheme: light;
     background-color: #f8fafc;
   }
+  html.dark {
+    color-scheme: dark;
+    background-color: #090e1a;
+  }
   body {
     background-color: #f8fafc;
     color: hsl(var(--foreground));
     -webkit-tap-highlight-color: transparent;
     overflow-x: hidden;
+  }
+  html.dark body {
+    background-color: #090e1a;
   }
   input,
   textarea,
@@ -62,10 +97,20 @@
     border: 1px solid rgba(226, 232, 240, 0.9);
     box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.02);
   }
+  .dark .glass-card {
+    background: #0f172a;
+    border: 1px solid rgba(30, 41, 59, 0.95);
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.35);
+  }
   .surface-elevated {
     background: #ffffff;
     border: 1px solid rgba(226, 232, 240, 0.9);
     box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.06), 0 2px 6px -2px rgba(15, 23, 42, 0.04);
+  }
+  .dark .surface-elevated {
+    background: #0f172a;
+    border: 1px solid rgba(51, 65, 85, 0.7);
+    box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.5);
   }
 }
 
@@ -118,7 +163,16 @@ input[type="number"] {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
 * {
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 transparent;
+}
+.dark * {
+  scrollbar-color: #334155 transparent;
 }

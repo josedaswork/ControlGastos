@@ -30,10 +30,12 @@ import {
   Legend
 } from 'recharts'
 import { getControlPanelData, getCachedControlPanelData } from '@/lib/sheetsApi'
+import { useTheme } from '@/lib/theme'
 import { fmt } from '@/lib/utils'
 import { toast } from 'sonner'
 
 export default function ChartsModal({ isOpen, onClose }) {
+  const { isDark } = useTheme()
   const [data, setData] = useState(() => getCachedControlPanelData())
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -182,34 +184,34 @@ export default function ChartsModal({ isOpen, onClose }) {
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto bg-slate-950/60 backdrop-blur-sm overscroll-contain">
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto bg-slate-950/60 dark:bg-black/75 backdrop-blur-sm overscroll-contain">
         <motion.div
           initial={{ opacity: 0, scale: 0.96, y: 16 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.96, y: 16 }}
           transition={{ duration: 0.22, ease: 'easeOut' }}
-          className="relative w-full max-w-5xl bg-white rounded-3xl shadow-2xl border border-slate-200/80 flex flex-col max-h-[92vh] overflow-hidden my-auto overscroll-contain"
+          className="relative w-full max-w-5xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200/80 dark:border-slate-800 flex flex-col max-h-[92vh] overflow-hidden my-auto overscroll-contain"
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-3.5 sm:px-4 py-2 sm:py-2.5 border-b border-slate-100 bg-slate-50/70">
+          <div className="flex items-center justify-between px-3.5 sm:px-4 py-2 sm:py-2.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center shadow-2xs">
+              <div className="w-8 h-8 rounded-xl bg-primary/10 dark:bg-primary/20 text-primary dark:text-blue-400 flex items-center justify-center shadow-2xs">
                 <BarChart3 className="w-4 h-4" />
               </div>
               <div>
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <h2 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight leading-snug">
+                  <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100 tracking-tight leading-snug">
                     Panel de Control — Gráficos 2026
                   </h2>
                   {isUsingCache && (refreshing || loading) && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/90 px-2 py-0.5 rounded-full shadow-2xs">
-                      <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-600" />
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200/90 dark:border-amber-800/70 px-2 py-0.5 rounded-full shadow-2xs">
+                      <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-600 dark:text-amber-400" />
                       <span>datos cacheados</span>
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-slate-500 font-medium">
-                  Datos consolidados · <span className="text-emerald-700 font-semibold">Almacenados en local</span>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                  Datos consolidados · <span className="text-emerald-700 dark:text-emerald-400 font-semibold">Almacenados en local</span>
                 </p>
               </div>
             </div>
@@ -222,9 +224,9 @@ export default function ChartsModal({ isOpen, onClose }) {
                 onClick={() => loadData(true)}
                 disabled={refreshing || loading}
                 title="Descargar datos actualizados del Panel de control desde Google Sheets"
-                className="h-8 rounded-xl border-slate-200 text-slate-700 hover:bg-slate-100 flex items-center gap-1.5 px-2.5 text-xs font-semibold"
+                className="h-8 rounded-xl border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 px-2.5 text-xs font-semibold"
               >
-                <Download className={`w-3.5 h-3.5 ${refreshing ? 'animate-bounce text-primary' : 'text-slate-500'}`} />
+                <Download className={`w-3.5 h-3.5 ${refreshing ? 'animate-bounce text-primary dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'}`} />
                 <span className="hidden sm:inline">{refreshing ? 'Descargando...' : 'Descargar de Excel'}</span>
                 <span className="sm:hidden">{refreshing ? '...' : 'Descargar'}</span>
               </Button>
@@ -234,7 +236,7 @@ export default function ChartsModal({ isOpen, onClose }) {
                   Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
                   onClose()
                 }}
-                className="w-8 h-8 rounded-full bg-white hover:bg-slate-100 text-slate-600 flex items-center justify-center border border-slate-200 transition-colors"
+                className="w-8 h-8 rounded-full bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center border border-slate-200 dark:border-slate-700 transition-colors"
                 aria-label="Cerrar gráficos"
               >
                 <X className="w-4 h-4" />
@@ -246,55 +248,55 @@ export default function ChartsModal({ isOpen, onClose }) {
           <div className="p-2.5 sm:p-4 overflow-y-auto space-y-2.5 sm:space-y-3">
             {/* KPI Summary Strip - Más compacto para no empujar el gráfico hacia abajo en móvil */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2">
-              <div className="p-2 sm:p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-100/90 shadow-2xs">
-                <div className="flex items-center justify-between text-emerald-600 text-[10px] sm:text-[11px] font-semibold mb-0.5">
+              <div className="p-2 sm:p-2.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/35 border border-emerald-100/90 dark:border-emerald-900/60 shadow-2xs">
+                <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400 text-[10px] sm:text-[11px] font-semibold mb-0.5">
                   <span>Ingresos Totales</span>
                   <ArrowUpRight className="w-3 h-3" />
                 </div>
-                <p className="text-sm sm:text-base font-bold text-slate-900 font-mono tracking-tight">
+                <p className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100 font-mono tracking-tight">
                   {fmt(summary.totalIncome)}
                 </p>
-                <p className="text-[9px] sm:text-[10px] text-slate-500 mt-0.5">
-                  Media: <strong className="text-slate-700">{fmt(summary.avgIncome)}/m</strong>
+                <p className="text-[9px] sm:text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Media: <strong className="text-slate-700 dark:text-slate-200">{fmt(summary.avgIncome)}/m</strong>
                 </p>
               </div>
 
-              <div className="p-2 sm:p-2.5 rounded-xl bg-rose-50/70 border border-rose-100/90 shadow-2xs">
-                <div className="flex items-center justify-between text-rose-600 text-[10px] sm:text-[11px] font-semibold mb-0.5">
+              <div className="p-2 sm:p-2.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/35 border border-rose-100/90 dark:border-rose-900/60 shadow-2xs">
+                <div className="flex items-center justify-between text-rose-600 dark:text-rose-400 text-[10px] sm:text-[11px] font-semibold mb-0.5">
                   <span>Gastos Totales</span>
                   <ArrowDownRight className="w-3 h-3" />
                 </div>
-                <p className="text-sm sm:text-base font-bold text-slate-900 font-mono tracking-tight">
+                <p className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100 font-mono tracking-tight">
                   {fmt(summary.totalExpenses)}
                 </p>
-                <p className="text-[9px] sm:text-[10px] text-slate-500 mt-0.5">
-                  Media: <strong className="text-slate-700">{fmt(summary.avgExpenses)}/m</strong>
+                <p className="text-[9px] sm:text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Media: <strong className="text-slate-700 dark:text-slate-200">{fmt(summary.avgExpenses)}/m</strong>
                 </p>
               </div>
 
-              <div className="p-2 sm:p-2.5 rounded-xl bg-blue-50/70 border border-blue-100/90 shadow-2xs">
-                <div className="flex items-center justify-between text-blue-600 text-[10px] sm:text-[11px] font-semibold mb-0.5">
+              <div className="p-2 sm:p-2.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/35 border border-blue-100/90 dark:border-blue-900/60 shadow-2xs">
+                <div className="flex items-center justify-between text-blue-600 dark:text-blue-400 text-[10px] sm:text-[11px] font-semibold mb-0.5">
                   <span>Balance Neto</span>
                   <Wallet className="w-3 h-3" />
                 </div>
-                <p className={`text-sm sm:text-base font-bold font-mono tracking-tight ${summary.netBalance >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                <p className={`text-sm sm:text-base font-bold font-mono tracking-tight ${summary.netBalance >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-rose-400'}`}>
                   {summary.netBalance > 0 ? `+${fmt(summary.netBalance)}` : fmt(summary.netBalance)}
                 </p>
-                <p className="text-[9px] sm:text-[10px] text-slate-500 mt-0.5">
-                  Ahorro: <strong className="text-slate-700">{fmt(summary.avgSavings)}/m</strong>
+                <p className="text-[9px] sm:text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Ahorro: <strong className="text-slate-700 dark:text-slate-200">{fmt(summary.avgSavings)}/m</strong>
                 </p>
               </div>
 
-              <div className="p-2 sm:p-2.5 rounded-xl bg-amber-50/70 border border-amber-100/90 shadow-2xs">
-                <div className="flex items-center justify-between text-amber-600 text-[10px] sm:text-[11px] font-semibold mb-0.5">
+              <div className="p-2 sm:p-2.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/35 border border-amber-100/90 dark:border-amber-900/60 shadow-2xs">
+                <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 text-[10px] sm:text-[11px] font-semibold mb-0.5">
                   <span>Costes F/V</span>
                   <Layers className="w-3 h-3" />
                 </div>
-                <div className="flex items-center justify-between text-[11px] sm:text-xs font-bold text-slate-800 mt-0.5">
-                  <span className="text-indigo-600 font-mono">F: {fmt(summary.totalFixed)}</span>
-                  <span className="text-amber-600 font-mono">V: {fmt(summary.totalVariable)}</span>
+                <div className="flex items-center justify-between text-[11px] sm:text-xs font-bold text-slate-800 dark:text-slate-200 mt-0.5">
+                  <span className="text-indigo-600 dark:text-indigo-400 font-mono">F: {fmt(summary.totalFixed)}</span>
+                  <span className="text-amber-600 dark:text-amber-400 font-mono">V: {fmt(summary.totalVariable)}</span>
                 </div>
-                <p className="text-[9px] sm:text-[10px] text-slate-500 mt-0.5">
+                <p className="text-[9px] sm:text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
                   {summary.activeMonthsCount} meses contabilizados
                 </p>
               </div>
@@ -302,7 +304,7 @@ export default function ChartsModal({ isOpen, onClose }) {
 
             {/* Filter / View Switcher */}
             <div className="flex flex-wrap items-center justify-between gap-1.5 pt-0.5 pb-0.5">
-              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl">
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl">
                 <button
                   type="button"
                   onClick={() => {
@@ -311,8 +313,8 @@ export default function ChartsModal({ isOpen, onClose }) {
                   }}
                   className={`px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all ${
                     expandedChart === null
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-500 hover:text-slate-800'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                   }`}
                 >
                   Cuadrícula (2 gráficos)
@@ -325,8 +327,8 @@ export default function ChartsModal({ isOpen, onClose }) {
                   }}
                   className={`px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all ${
                     expandedChart === 'incomeVsExpenses'
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-500 hover:text-slate-800'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                   }`}
                 >
                   Ingresos vs Gastos
@@ -339,8 +341,8 @@ export default function ChartsModal({ isOpen, onClose }) {
                   }}
                   className={`px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all ${
                     expandedChart === 'fixedVsVariable'
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-500 hover:text-slate-800'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                   }`}
                 >
                   Fijos vs Variables
@@ -353,8 +355,8 @@ export default function ChartsModal({ isOpen, onClose }) {
                   onClick={() => setShowOnlyActive(!showOnlyActive)}
                   className={`text-[11px] sm:text-xs px-2.5 py-1 rounded-lg font-medium border transition-colors ${
                     showOnlyActive
-                      ? 'bg-primary/10 text-primary border-primary/30 font-semibold'
-                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      ? 'bg-primary/10 dark:bg-primary/20 text-primary dark:text-blue-400 border-primary/30 dark:border-blue-700 font-semibold'
+                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'
                   }`}
                 >
                   {showOnlyActive ? 'Solo meses con datos' : 'Ver los 12 meses'}
@@ -373,7 +375,7 @@ export default function ChartsModal({ isOpen, onClose }) {
                 <motion.div
                   layout
                   transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-                  className={`bg-white rounded-xl sm:rounded-2xl p-3 sm:p-3.5 border border-slate-200/90 shadow-xs flex flex-col ${
+                  className={`bg-white dark:bg-slate-950/60 rounded-xl sm:rounded-2xl p-3 sm:p-3.5 border border-slate-200/90 dark:border-slate-800 shadow-xs flex flex-col ${
                     expandedChart === 'incomeVsExpenses' ? 'ring-2 ring-primary/20' : ''
                   }`}
                 >
@@ -382,11 +384,11 @@ export default function ChartsModal({ isOpen, onClose }) {
                     <div>
                       <div className="flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                        <h3 className="text-xs sm:text-sm font-bold text-slate-900">
+                        <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
                           Ingresos vs. Gastos Totales
                         </h3>
                       </div>
-                      <p className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5">
+                      <p className="text-[10px] sm:text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
                         Gráfico de columnas comparativo mes a mes
                       </p>
                     </div>
@@ -396,10 +398,10 @@ export default function ChartsModal({ isOpen, onClose }) {
                         type="button"
                         onClick={() => handleToggleExpand('incomeVsExpenses')}
                         title={expandedChart === 'incomeVsExpenses' ? 'Minimizar a cuadrícula' : 'Agrandar gráfico'}
-                        className="p-1 rounded-lg text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                        className="p-1 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                       >
                         {expandedChart === 'incomeVsExpenses' ? (
-                          <Minimize2 className="w-3.5 h-3.5 text-primary" />
+                          <Minimize2 className="w-3.5 h-3.5 text-primary dark:text-blue-400" />
                         ) : (
                           <Maximize2 className="w-3.5 h-3.5" />
                         )}
@@ -411,14 +413,14 @@ export default function ChartsModal({ isOpen, onClose }) {
                   <div className="flex items-center gap-3 text-[11px] font-semibold mb-1 px-0.5">
                     <div className="flex items-center gap-1">
                       <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500" />
-                      <span className="text-slate-700">Ingresos</span>
+                      <span className="text-slate-700 dark:text-slate-300">Ingresos</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <span className="w-2.5 h-2.5 rounded-xs bg-rose-500" />
-                      <span className="text-slate-700">Gastos</span>
+                      <span className="text-slate-700 dark:text-slate-300">Gastos</span>
                     </div>
                     {expandedChart === 'incomeVsExpenses' && (
-                      <span className="text-[10px] text-slate-400 font-normal ml-auto">
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal ml-auto">
                         Toca una barra para ver detalle
                       </span>
                     )}
@@ -435,16 +437,16 @@ export default function ChartsModal({ isOpen, onClose }) {
                         data={filteredData}
                         margin={{ top: 6, right: 6, left: -22, bottom: 0 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? '#1e293b' : '#f1f5f9'} />
                         <XAxis
                           dataKey="shortMonth"
-                          stroke="#64748b"
+                          stroke={isDark ? '#94a3b8' : '#64748b'}
                           fontSize={10}
                           tickLine={false}
-                          axisLine={{ stroke: '#e2e8f0' }}
+                          axisLine={{ stroke: isDark ? '#334155' : '#e2e8f0' }}
                         />
                         <YAxis
-                          stroke="#64748b"
+                          stroke={isDark ? '#94a3b8' : '#64748b'}
                           fontSize={9}
                           width={34}
                           tickLine={false}
@@ -477,24 +479,24 @@ export default function ChartsModal({ isOpen, onClose }) {
                     <motion.div
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="mt-3 pt-2.5 border-t border-slate-100"
+                      className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800"
                     >
-                      <h4 className="text-[11px] font-bold text-slate-800 mb-1.5">Desglose mensual</h4>
+                      <h4 className="text-[11px] font-bold text-slate-800 dark:text-slate-200 mb-1.5">Desglose mensual</h4>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
                         {filteredData.filter((d) => d.hasData).map((item) => (
-                          <div key={item.month} className="p-1.5 rounded-lg bg-slate-50 border border-slate-100">
-                            <span className="font-bold text-slate-800 text-[11px]">{item.month}</span>
-                            <div className="flex justify-between text-[10px] text-emerald-600 mt-0.5">
+                          <div key={item.month} className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800">
+                            <span className="font-bold text-slate-800 dark:text-slate-200 text-[11px]">{item.month}</span>
+                            <div className="flex justify-between text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">
                               <span>Ing:</span>
                               <span className="font-mono font-semibold">{fmt(item.income)}</span>
                             </div>
-                            <div className="flex justify-between text-[10px] text-rose-600">
+                            <div className="flex justify-between text-[10px] text-rose-600 dark:text-rose-400">
                               <span>Gas:</span>
                               <span className="font-mono font-semibold">{fmt(item.expenses)}</span>
                             </div>
-                            <div className="flex justify-between text-[10px] font-bold text-slate-700 pt-0.5 border-t border-slate-200 mt-0.5">
+                            <div className="flex justify-between text-[10px] font-bold text-slate-700 dark:text-slate-300 pt-0.5 border-t border-slate-200 dark:border-slate-800 mt-0.5">
                               <span>Neto:</span>
-                              <span className={`font-mono ${item.netBalance >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                              <span className={`font-mono ${item.netBalance >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}`}>
                                 {fmt(item.netBalance)}
                               </span>
                             </div>
@@ -511,7 +513,7 @@ export default function ChartsModal({ isOpen, onClose }) {
                 <motion.div
                   layout
                   transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-                  className={`bg-white rounded-xl sm:rounded-2xl p-3 sm:p-3.5 border border-slate-200/90 shadow-xs flex flex-col ${
+                  className={`bg-white dark:bg-slate-950/60 rounded-xl sm:rounded-2xl p-3 sm:p-3.5 border border-slate-200/90 dark:border-slate-800 shadow-xs flex flex-col ${
                     expandedChart === 'fixedVsVariable' ? 'ring-2 ring-primary/20' : ''
                   }`}
                 >
@@ -520,11 +522,11 @@ export default function ChartsModal({ isOpen, onClose }) {
                     <div>
                       <div className="flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full bg-indigo-500" />
-                        <h3 className="text-xs sm:text-sm font-bold text-slate-900">
+                        <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
                           Gastos Fijos vs. Gastos Variables
                         </h3>
                       </div>
-                      <p className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5">
+                      <p className="text-[10px] sm:text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
                         Gráfico de líneas con la evolución de costes
                       </p>
                     </div>
@@ -534,10 +536,10 @@ export default function ChartsModal({ isOpen, onClose }) {
                         type="button"
                         onClick={() => handleToggleExpand('fixedVsVariable')}
                         title={expandedChart === 'fixedVsVariable' ? 'Minimizar a cuadrícula' : 'Agrandar gráfico'}
-                        className="p-1 rounded-lg text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                        className="p-1 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                       >
                         {expandedChart === 'fixedVsVariable' ? (
-                          <Minimize2 className="w-3.5 h-3.5 text-primary" />
+                          <Minimize2 className="w-3.5 h-3.5 text-primary dark:text-blue-400" />
                         ) : (
                           <Maximize2 className="w-3.5 h-3.5" />
                         )}
@@ -550,15 +552,15 @@ export default function ChartsModal({ isOpen, onClose }) {
                     <div className="flex items-center gap-1">
                       <span className="w-2.5 h-0.5 bg-indigo-500 rounded-full" />
                       <span className="w-2 h-2 rounded-full bg-indigo-500" />
-                      <span className="text-slate-700">Gastos Fijos</span>
+                      <span className="text-slate-700 dark:text-slate-300">Gastos Fijos</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <span className="w-2.5 h-0.5 bg-amber-500 rounded-full" />
                       <span className="w-2 h-2 rounded-full bg-amber-500" />
-                      <span className="text-slate-700">Gastos Variables</span>
+                      <span className="text-slate-700 dark:text-slate-300">Gastos Variables</span>
                     </div>
                     {expandedChart === 'fixedVsVariable' && (
-                      <span className="text-[10px] text-slate-400 font-normal ml-auto">
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal ml-auto">
                         Toca un punto para ver desglose
                       </span>
                     )}
@@ -575,16 +577,16 @@ export default function ChartsModal({ isOpen, onClose }) {
                         data={filteredData}
                         margin={{ top: 6, right: 6, left: -22, bottom: 0 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? '#1e293b' : '#f1f5f9'} />
                         <XAxis
                           dataKey="shortMonth"
-                          stroke="#64748b"
+                          stroke={isDark ? '#94a3b8' : '#64748b'}
                           fontSize={10}
                           tickLine={false}
-                          axisLine={{ stroke: '#e2e8f0' }}
+                          axisLine={{ stroke: isDark ? '#334155' : '#e2e8f0' }}
                         />
                         <YAxis
-                          stroke="#64748b"
+                          stroke={isDark ? '#94a3b8' : '#64748b'}
                           fontSize={9}
                           width={34}
                           tickLine={false}
@@ -598,7 +600,7 @@ export default function ChartsModal({ isOpen, onClose }) {
                           name="Gastos Fijos"
                           stroke="#6366f1"
                           strokeWidth={2.2}
-                          dot={{ r: 3, fill: '#6366f1', strokeWidth: 1.5, stroke: '#ffffff' }}
+                          dot={{ r: 3, fill: '#6366f1', strokeWidth: 1.5, stroke: isDark ? '#0f172a' : '#ffffff' }}
                           activeDot={{ r: 5, fill: '#6366f1' }}
                           animationDuration={800}
                         />
@@ -608,7 +610,7 @@ export default function ChartsModal({ isOpen, onClose }) {
                           name="Gastos Variables"
                           stroke="#f59e0b"
                           strokeWidth={2.2}
-                          dot={{ r: 3, fill: '#f59e0b', strokeWidth: 1.5, stroke: '#ffffff' }}
+                          dot={{ r: 3, fill: '#f59e0b', strokeWidth: 1.5, stroke: isDark ? '#0f172a' : '#ffffff' }}
                           activeDot={{ r: 5, fill: '#f59e0b' }}
                           animationDuration={800}
                         />
@@ -621,22 +623,22 @@ export default function ChartsModal({ isOpen, onClose }) {
                     <motion.div
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="mt-3 pt-2.5 border-t border-slate-100"
+                      className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800"
                     >
-                      <h4 className="text-[11px] font-bold text-slate-800 mb-1.5">Desglose Fijos vs Variables</h4>
+                      <h4 className="text-[11px] font-bold text-slate-800 dark:text-slate-200 mb-1.5">Desglose Fijos vs Variables</h4>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
                         {filteredData.filter((d) => d.hasData).map((item) => (
-                          <div key={item.month} className="p-1.5 rounded-lg bg-slate-50 border border-slate-100">
-                            <span className="font-bold text-slate-800 text-[11px]">{item.month}</span>
-                            <div className="flex justify-between text-[10px] text-indigo-600 mt-0.5">
+                          <div key={item.month} className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800">
+                            <span className="font-bold text-slate-800 dark:text-slate-200 text-[11px]">{item.month}</span>
+                            <div className="flex justify-between text-[10px] text-indigo-600 dark:text-indigo-400 mt-0.5">
                               <span>Fijos:</span>
                               <span className="font-mono font-semibold">{fmt(item.fixedExpenses)}</span>
                             </div>
-                            <div className="flex justify-between text-[10px] text-amber-600">
+                            <div className="flex justify-between text-[10px] text-amber-600 dark:text-amber-400">
                               <span>Var:</span>
                               <span className="font-mono font-semibold">{fmt(item.variableExpenses)}</span>
                             </div>
-                            <div className="flex justify-between text-[9px] text-slate-500 pt-0.5 border-t border-slate-200 mt-0.5">
+                            <div className="flex justify-between text-[9px] text-slate-500 dark:text-slate-400 pt-0.5 border-t border-slate-200 dark:border-slate-800 mt-0.5">
                               <span>% Fijos:</span>
                               <span className="font-mono font-semibold">
                                 {item.income > 0 ? `${Math.round((item.fixedExpenses / item.income) * 100)}%` : '-'}
