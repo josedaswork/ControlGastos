@@ -151,13 +151,13 @@ public class SyncExecutor {
                 try {
                     queryAndMergeTaskStatuses(scriptUrl, tasks, unresolvedIds, resultMap);
                     persistPartialPushState(requestId, tasks, resultMap, mergedMonthsData);
+                } catch (AppsScriptHttpClient.HttpException scriptErr) {
+                    // Si falla el backend (permisos/script inválido), reportamos fallo sin reintentar en bucle
+                    finishWithError(requestId, SyncConstants.STATUS_FAILED, scriptErr.errorCode, scriptErr.getMessage());
+                    return Outcome.FAILED;
                 } catch (IOException netErr) {
                     return handleNetworkInterruption(requestId, attempt, countConfirmed(tasks, resultMap), tasks.length(),
                             "No se pudo verificar el estado previo en Excel: " + safeMsg(netErr), true);
-                } catch (AppsScriptHttpClient.HttpException scriptErr) {
-                    // Continuamos solo si el error no impide avanzar; si falla backend, reportamos fallo
-                    finishWithError(requestId, SyncConstants.STATUS_FAILED, scriptErr.errorCode, scriptErr.getMessage());
-                    return Outcome.FAILED;
                 }
             }
         }
@@ -203,6 +203,9 @@ public class SyncExecutor {
                 mergeBatchResults(resultsArr, resultMap);
                 mergeMonthsData(mergedMonthsData, batchRes.optJSONObject("monthsData"));
                 persistPartialPushState(requestId, tasks, resultMap, mergedMonthsData);
+            } catch (AppsScriptHttpClient.HttpException scriptErr) {
+                finishWithError(requestId, SyncConstants.STATUS_FAILED, scriptErr.errorCode, scriptErr.getMessage());
+                return Outcome.FAILED;
             } catch (IOException netErr) {
                 // Corte de red o timeout justo durante el POST: el servidor pudo haber aplicado parte del lote.
                 // Consultamos inmediatamente getTaskStatuses para reconciliar antes de reintentar.
@@ -216,9 +219,6 @@ public class SyncExecutor {
                 }
                 return handleNetworkInterruption(requestId, attempt, countConfirmed(tasks, resultMap), totalTasks,
                         "Conexión interrumpida durante la subida: " + safeMsg(netErr), true);
-            } catch (AppsScriptHttpClient.HttpException scriptErr) {
-                finishWithError(requestId, SyncConstants.STATUS_FAILED, scriptErr.errorCode, scriptErr.getMessage());
-                return Outcome.FAILED;
             } catch (JSONException jsonErr) {
                 finishWithError(requestId, SyncConstants.STATUS_FAILED, SyncConstants.ERROR_INVALID_REQUEST,
                         "Error construyendo lote JSON: " + jsonErr.getMessage());
@@ -402,11 +402,11 @@ public class SyncExecutor {
                         "Sincronización completa descargada (" + month + ").", fullRes);
                 return Outcome.SUCCEEDED;
             }
+        } catch (AppsScriptHttpClient.HttpException ignored) {
+            // Puede tratarse de una versión antigua de script sin getFullSyncData: intentamos descarga modular
         } catch (IOException netErr) {
             return handleNetworkInterruption(requestId, attempt, 0, 5,
                     "Sin conexión durante la descarga completa: " + safeMsg(netErr), false);
-        } catch (AppsScriptHttpClient.HttpException ignored) {
-            // Puede tratarse de una versión antigua de script sin getFullSyncData: intentamos descarga modular
         }
 
         // 2. Fallback modular con seguimiento estricto de éxitos/fallos por parte
@@ -427,6 +427,8 @@ public class SyncExecutor {
                     transport.get(buildUrl(scriptUrl, "action=getMonthData&month=" + encodeUrl(month) + "&_t=" + System.currentTimeMillis()))
             );
             succeededParts++;
+        } catch (AppsScriptHttpClient.HttpException scriptErr) {
+            failedParts.add(month + ": " + safeMsg(scriptErr));
         } catch (IOException netErr) {
             return handleNetworkInterruption(requestId, attempt, succeededParts, 5,
                     "Sin conexión descargando " + month + ": " + safeMsg(netErr), false);
