@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   UploadCloud,
   X,
@@ -7,60 +7,88 @@ import {
   AlertCircle,
   PlusCircle,
   Edit3,
-  Calendar,
   Layers,
   ArrowUpRight,
   Target,
   Sparkles,
-  RotateCcw
+  RotateCcw,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { Button } from '@/components/ui/button'
-import { removePushTask, clearPushQueue, pushAllChanges } from '@/lib/sheetsApi'
+import { removePushTask, clearPushQueue } from '@/lib/sheetsApi'
+import {
+  startPushSync,
+  subscribeSyncState,
+  getSyncSnapshot,
+} from '@/lib/syncManager'
+import { isNativeBackgroundSyncAvailable } from '@/lib/backgroundSyncPlugin'
 import { fmt } from '@/lib/utils'
 import { toast } from 'sonner'
 
 export default function PushChangesModal({ isOpen, onClose, queue = [], onPushed }) {
-  const [pushing, setPushing] = useState(false)
-  const [progress, setProgress] = useState(null) // { current: 1, total: 3 }
+  const [syncSnap, setSyncSnap] = useState(() => getSyncSnapshot())
+  const [progress, setProgress] = useState(null) // { current: 1, total: 3, message?: string }
+  const isNative = isNativeBackgroundSyncAvailable()
+
+  useEffect(() => {
+    const unsub = subscribeSyncState((snap) => {
+      setSyncSnap(snap)
+      if (snap?.activeSync?.type === 'push' && snap.activeSync.progressTotal > 0) {
+        setProgress({
+          current: snap.activeSync.progressCurrent || 0,
+          total: snap.activeSync.progressTotal,
+          message: snap.activeSync.progressMessage,
+        })
+      } else if (!snap?.isPushing) {
+        setProgress(null)
+      }
+    })
+    return () => unsub()
+  }, [])
 
   if (!isOpen) return null
 
+  const pushing = Boolean(syncSnap.isPushing)
+  const pulling = Boolean(syncSnap.isPulling)
+
   const handlePush = async () => {
-    if (pushing || queue.length === 0) return
+    if (pushing || pulling || queue.length === 0) return
     Haptics.impact({ style: ImpactStyle.Heavy }).catch(() => {})
-    setPushing(true)
-    setProgress({ current: 0, total: queue.length })
+    setProgress({ current: 0, total: queue.length, message: 'Iniciando subida segura…' })
 
     const toastId = toast.loading('Subiendo paquete de cambios a Google Sheets...')
 
     try {
-      const res = await pushAllChanges((p) => {
-        setProgress(p)
+      const res = await startPushSync({
+        toastId,
+        onProgress: (p) => setProgress(p),
       })
 
       Haptics.notification({ type: 'success' }).catch(() => {})
-      toast.success(`¡${res.count} cambios subidos con éxito al Excel!`, { id: toastId, duration: 4000 })
+      if (res?.mode !== 'native') {
+        toast.success(`¡${res.count} cambios subidos con éxito al Excel!`, { id: toastId, duration: 4000 })
+      }
       onPushed?.()
       onClose()
     } catch (err) {
       Haptics.notification({ type: 'error' }).catch(() => {})
-      toast.error('Error al subir cambios: ' + err.message, { id: toastId, duration: 6000 })
+      if (!isNative) {
+        toast.error('Error al subir cambios: ' + err.message, { id: toastId, duration: 6000 })
+      }
       onPushed?.()
-    } finally {
-      setPushing(false)
-      setProgress(null)
     }
   }
 
   const handleRemove = (taskId) => {
+    if (pushing) return
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
     removePushTask(taskId)
     onPushed?.()
   }
 
   const handleClearAll = () => {
+    if (pushing) return
     if (window.confirm('¿Deseas descartar todas las tareas pendientes de subir?')) {
       Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {})
       clearPushQueue()
@@ -122,7 +150,7 @@ export default function PushChangesModal({ isOpen, onClose, queue = [], onPushed
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         className="fixed inset-0 bg-slate-900/50 dark:bg-black/70 backdrop-blur-xs touch-none overscroll-none"
-        onClick={!pushing ? onClose : undefined}
+        onClick={!pushing || isNative ? onClose : undefined}
         onTouchMove={(e) => e.preventDefault()}
       />
 
@@ -155,7 +183,7 @@ export default function PushChangesModal({ isOpen, onClose, queue = [], onPushed
               </p>
             </div>
           </div>
-          {!pushing && (
+          {(!pushing || isNative) && (
             <button
               type="button"
               onClick={onClose}
@@ -169,11 +197,25 @@ export default function PushChangesModal({ isOpen, onClose, queue = [], onPushed
         {/* Description Banner */}
         <div className="bg-slate-50 dark:bg-slate-950/60 rounded-2xl p-3 border border-slate-200/70 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 flex items-start gap-2.5">
           <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
-          <p>
-            Todos tus cambios se han aplicado instantáneamente en la app y están guardados en tu dispositivo. Al pulsar{' '}
-            <strong className="text-slate-800 dark:text-slate-200">Subir cambios a Excel</strong>, se enviarán en un solo paquete a tu hoja de cálculo.
-          </p>
+          <div className="space-y-1">
+            <p>
+              Todos tus cambios se han aplicado instantáneamente en la app y están guardados en tu dispositivo. Al pulsar{' '}
+              <strong className="text-slate-800 dark:text-slate-200">Subir cambios a Excel</strong>, cada tarea se envía con identificador único anti-duplicados.
+            </p>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              {isNative
+                ? 'En Android, WorkManager continúa la subida en segundo plano aunque cambies de app o bloquees la pantalla (no sobrevive a «Forzar detención»).'
+                : 'En navegador web, mantén la pestaña abierta hasta que finalice la subida.'}
+            </p>
+          </div>
         </div>
+
+        {syncSnap.lastNotice && (syncSnap.lastNotice.level === 'warning' || syncSnap.lastNotice.level === 'error') && (
+          <div className="p-3 rounded-2xl border border-amber-300/80 dark:border-amber-800/70 bg-amber-50/80 dark:bg-amber-950/40 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <span>{syncSnap.lastNotice.message}</span>
+          </div>
+        )}
 
         {/* Task List (Scrollable) */}
         <div className="flex-1 overflow-y-auto space-y-2 pr-1 max-h-[46vh] min-h-[140px]">
@@ -187,7 +229,7 @@ export default function PushChangesModal({ isOpen, onClose, queue = [], onPushed
             <AnimatePresence>
               {queue.map((task, idx) => (
                 <motion.div
-                  key={task.id || idx}
+                  key={task.mutationId || task.id || idx}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, x: -20 }}
@@ -242,9 +284,11 @@ export default function PushChangesModal({ isOpen, onClose, queue = [], onPushed
               <div className="flex items-center justify-center gap-2 text-xs font-bold text-blue-800 dark:text-blue-200">
                 <UploadCloud className="w-4 h-4 animate-bounce text-blue-600 dark:text-blue-400" />
                 <span>
-                  {progress
-                    ? `Subiendo ${progress.current} de ${progress.total} cambios...`
-                    : 'Conectando con Google Sheets...'}
+                  {progress?.message
+                    ? progress.message
+                    : progress?.total
+                      ? `Subiendo ${progress.current} de ${progress.total} cambios...`
+                      : 'Conectando con Google Sheets...'}
                 </span>
               </div>
               <div className="w-full bg-blue-200/60 dark:bg-blue-900/60 rounded-full h-1.5 overflow-hidden">
@@ -259,6 +303,11 @@ export default function PushChangesModal({ isOpen, onClose, queue = [], onPushed
                   transition={{ duration: 0.3 }}
                 />
               </div>
+              {isNative && (
+                <p className="text-[10px] text-blue-700/80 dark:text-blue-300/80">
+                  Puedes cerrar esta ventana: la sincronización seguirá en segundo plano.
+                </p>
+              )}
             </div>
           ) : (
             <div className="flex items-center gap-2">
@@ -276,11 +325,11 @@ export default function PushChangesModal({ isOpen, onClose, queue = [], onPushed
               <Button
                 type="button"
                 onClick={handlePush}
-                disabled={queue.length === 0}
+                disabled={queue.length === 0 || pulling}
                 className="flex-1 rounded-2xl h-12 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md shadow-blue-500/20 flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 <UploadCloud className="w-5 h-5 stroke-[2.2]" />
-                <span>Subir cambios a Excel (Push)</span>
+                <span>{pulling ? 'Descarga en curso…' : 'Subir cambios a Excel (Push)'}</span>
               </Button>
             </div>
           )}

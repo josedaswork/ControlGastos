@@ -332,7 +332,7 @@ export default function SetupScreen({ onSave, onClose, initialUrl }) {
                       Copiar código de Google Apps Script
                     </span>
                     <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/70 px-2 py-0.5 rounded-full ml-2">
-                      v3.5 Rápido
+                      v4.1 Sync Segura
                     </span>
                   </motion.span>
                 )}

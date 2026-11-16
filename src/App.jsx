@@ -44,9 +44,6 @@ import {
   normalizeScriptUrl,
   getPushQueue,
   subscribePushQueue,
-  pushAllChanges,
-  pullMonthDataFromSheets,
-  fullSyncFromSheets,
   stageAddExpense,
   stageUpdateExpense,
   stageDeleteExpense,
@@ -57,6 +54,16 @@ import {
   stageAddIncome,
   recordCategoryUsage,
 } from '@/lib/sheetsApi'
+import {
+  initSyncCoordinator,
+  subscribeSyncState,
+  getSyncSnapshot,
+  startPushSync,
+  startPullMonthSync,
+  startFullSync,
+  clearLastSyncNotice,
+} from '@/lib/syncManager'
+import { isNativeBackgroundSyncAvailable } from '@/lib/backgroundSyncPlugin'
 import { isDebugEnabled, subscribeLogs } from '@/lib/debugLogger'
 import MonthSelector from '@/components/MonthSelector'
 import MonthlySummary from '@/components/MonthlySummary'
@@ -103,8 +110,7 @@ function App() {
   const [editingExpense, setEditingExpense] = useState(null)
   const [deletingExpense, setDeletingExpense] = useState(null)
   const [pushQueue, setPushQueue] = useState(() => getPushQueue())
-  const [pulling, setPulling] = useState(false)
-  const [quickPushing, setQuickPushing] = useState(false)
+  const [syncSnap, setSyncSnap] = useState(() => getSyncSnapshot())
   const [pendingCount, setPendingCount] = useState(getPendingExpenses().length)
   const [syncing, setSyncing] = useState(false)
   const [sendingExpenses, setSendingExpenses] = useState([])
@@ -115,6 +121,10 @@ function App() {
   const processingRef = useRef(false)
   const loadIdRef = useRef(0)
   const initialFinalizedSyncRef = useRef(null)
+  const monthNameRef = useRef(MONTHS[selectedMonth])
+
+  const pulling = Boolean(syncSnap.isPulling)
+  const quickPushing = Boolean(syncSnap.isPushing)
 
   const isAnyModalOpen = Boolean(
     showAddModal ||
@@ -158,6 +168,32 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const unsub = subscribeSyncState((snap) => {
+      setSyncSnap(snap)
+    })
+    return () => unsub()
+  }, [])
+
+  useEffect(() => {
+    const cleanup = initSyncCoordinator({
+      onDataChanged: () => {
+        const activeMonth = monthNameRef.current
+        const freshSummary = getCachedSummary(activeMonth)
+        const freshExpenses = getCachedExpenses(activeMonth)
+        const freshCategories = getCachedCategories()
+        if (freshSummary) setSummary(freshSummary)
+        if (freshExpenses?.expenses) setExpenses(freshExpenses.expenses)
+        if (freshCategories?.categories?.length > 0) setCategories(freshCategories.categories)
+        if (freshCategories?.incomeCategories?.length > 0) setIncomeCategories(freshCategories.incomeCategories)
+        setFinalizedMonths(getFinalizedMonths())
+        setEffectiveCurrentMonth(getEffectiveCurrentMonth())
+        setIsUsingCache(false)
+      },
+    })
+    return () => cleanup?.()
+  }, [])
+
+  useEffect(() => {
     const unsub = subscribeLogs((currentLogs) => {
       setDebugActive(isDebugEnabled())
       const errs = currentLogs.filter((l) => l.status === 'error').length
@@ -167,6 +203,7 @@ function App() {
   }, [])
 
   const monthName = MONTHS[selectedMonth]
+  monthNameRef.current = monthName
 
   const applyDownloadedMonthStatus = (monthData) => {
     if (!monthData || typeof monthData.monthFinalized !== 'boolean') return
@@ -263,14 +300,14 @@ function App() {
     setLoading(true)
     try {
       const [monthResult, categoriesResult] = await Promise.allSettled([
-        pullMonthDataFromSheets(monthName),
+        startPullMonthSync(monthName, { preserveLocalQueue: true, silent: true }),
         fetchCategories(),
       ])
       if (currentLoadId !== loadIdRef.current) return
 
       const freshSummary = getCachedSummary(monthName)
       const freshExpenses = getCachedExpenses(monthName)
-      if (monthResult.status === 'fulfilled') applyDownloadedMonthStatus(monthResult.value)
+      if (monthResult.status === 'fulfilled') applyDownloadedMonthStatus(monthResult.value?.monthData || monthResult.value)
       if (freshSummary) setSummary(freshSummary)
       if (freshExpenses?.expenses) setExpenses(freshExpenses.expenses)
       if (categoriesResult.status === 'fulfilled') {
@@ -289,15 +326,14 @@ function App() {
   }, [scriptUrl, monthName])
 
   const handleFullSync = async (targetUrl = null) => {
-    if (pulling) return
+    if (syncSnap.isSyncing) return
     const effectiveUrl = targetUrl || scriptUrl
     if (!effectiveUrl) return
 
-    setPulling(true)
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
     const toastId = toast.loading(`Descargando TODO desde Excel (${monthName}, meses colindantes, casillas y Panel de Control)...`)
     try {
-      const syncResult = await fullSyncFromSheets(monthName)
+      const syncResult = await startFullSync(monthName, { toastId, preserveLocalQueue: true })
       applyDownloadedMonthStatus(syncResult?.monthData)
       const freshSummary = getCachedSummary(monthName)
       const freshExpenses = getCachedExpenses(monthName)
@@ -308,58 +344,69 @@ function App() {
       if (cachedCategories?.categories?.length > 0) setCategories(cachedCategories.categories)
       if (cachedCategories?.incomeCategories?.length > 0) setIncomeCategories(cachedCategories.incomeCategories)
       Haptics.notification({ type: 'success' }).catch(() => {})
-      toast.success(`¡Descargado TODO con éxito! (${monthName}, meses colindantes, casillas y Panel de Control)`, { id: toastId })
+      if (syncResult?.mode !== 'native') {
+        if (syncResult?.partial) {
+          toast.warning(
+            `Descarga parcial: ${monthName} actualizado, pero fallaron ${syncResult.failedParts?.length || 1} parte(s).`,
+            { id: toastId, duration: 5500 }
+          )
+        } else {
+          toast.success(`¡Descargado TODO con éxito! (${monthName}, meses colindantes, casillas y Panel de Control)`, { id: toastId })
+        }
+      }
     } catch (err) {
-      toast.error('Error al descargar del Excel: ' + err.message, { id: toastId })
-    } finally {
-      setPulling(false)
+      if (!isNativeBackgroundSyncAvailable()) {
+        toast.error('Error al descargar del Excel: ' + err.message, { id: toastId })
+      }
     }
   }
 
   const handlePullMonthData = async (forceBypass = false) => {
-    if (pulling || !scriptUrl) return
+    if (syncSnap.isSyncing || !scriptUrl) return
     const pendingInThisMonth = pushQueue.filter((t) => t.month === monthName)
     if (!forceBypass && pendingInThisMonth.length > 0) {
       const confirmed = window.confirm(
-        `Tienes ${pendingInThisMonth.length} cambio(s) pendiente(s) de subir en ${monthName}.\n\nSi descargas ahora de Excel, tus cambios locales no subidos podrían sobreescribirse.\n\n¿Deseas descargar de todos modos?`
+        `Tienes ${pendingInThisMonth.length} cambio(s) pendiente(s) de subir en ${monthName}.\n\nAl descargar se actualizará con los datos de Google Sheets manteniendo encima tus cambios locales pendientes de Push.\n\n¿Deseas descargar ahora?`
       )
       if (!confirmed) return
     }
 
-    setPulling(true)
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
     const toastId = toast.loading(`Descargando ${monthName} desde Excel...`)
     try {
-      const result = await pullMonthDataFromSheets(monthName)
-      applyDownloadedMonthStatus(result)
+      const result = await startPullMonthSync(monthName, { toastId, preserveLocalQueue: true })
+      applyDownloadedMonthStatus(result?.monthData || result)
       const freshSummary = result?.summary || getCachedSummary(monthName)
       const freshExpenses = result?.expenses || getCachedExpenses(monthName)?.expenses
       if (freshSummary) setSummary(freshSummary)
       if (freshExpenses) setExpenses(freshExpenses)
       setIsUsingCache(false)
-      toast.success(`¡${monthName} descargado correctamente!`, { id: toastId })
+      if (result?.mode !== 'native') {
+        toast.success(`¡${monthName} descargado correctamente!`, { id: toastId })
+      }
     } catch (err) {
-      toast.error('Error al descargar del Excel: ' + err.message, { id: toastId })
-    } finally {
-      setPulling(false)
+      if (!isNativeBackgroundSyncAvailable()) {
+        toast.error('Error al descargar del Excel: ' + err.message, { id: toastId })
+      }
     }
   }
 
   const handleQuickPush = async () => {
-    if (quickPushing || pushQueue.length === 0) return
+    if (syncSnap.isSyncing || pushQueue.length === 0) return
     Haptics.impact({ style: ImpactStyle.Heavy }).catch(() => {})
-    setQuickPushing(true)
     const toastId = toast.loading(`Subiendo ${pushQueue.length} cambio(s) a Google Sheets...`)
     try {
-      const res = await pushAllChanges()
+      const res = await startPushSync({ toastId })
       Haptics.notification({ type: 'success' }).catch(() => {})
-      toast.success(`¡${res.count} cambio(s) subidos a Excel con éxito!`, { id: toastId })
+      if (res?.mode !== 'native') {
+        toast.success(`¡${res.count} cambio(s) subidos a Excel con éxito!`, { id: toastId })
+      }
       loadData(false)
     } catch (err) {
       Haptics.notification({ type: 'error' }).catch(() => {})
-      toast.error('Error al subir cambios: ' + err.message, { id: toastId })
-    } finally {
-      setQuickPushing(false)
+      if (!isNativeBackgroundSyncAvailable()) {
+        toast.error('Error al subir cambios: ' + err.message, { id: toastId, duration: 6000 })
+      }
     }
   }
 
@@ -668,10 +715,10 @@ function App() {
             <motion.button
               type="button"
               onClick={() => handlePullMonthData(false)}
-              disabled={loading || pulling}
+              disabled={loading || pulling || quickPushing}
               whileTap={{ scale: 0.88 }}
-              aria-label="Descargar TODO del Excel"
-              title={`Descargar TODO del Excel (${monthName}, meses colindantes, casillas y Panel de Control)`}
+              aria-label="Descargar datos del Excel"
+              title={`Descargar ${monthName} desde Excel`}
               className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 transition-colors disabled:opacity-50"
             >
               <Download className={`h-4 w-4 sm:h-4.5 sm:w-4.5 ${pulling ? 'animate-bounce text-primary' : ''}`} />
@@ -747,6 +794,53 @@ function App() {
             </motion.button>
           </div>
         </header>
+
+        {/* Banner de estado/recuperación de sincronización en segundo plano */}
+        <AnimatePresence>
+          {(syncSnap.activeSync || (syncSnap.lastNotice && (syncSnap.lastNotice.level === 'warning' || syncSnap.lastNotice.level === 'error'))) && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="px-4 pb-2 shrink-0"
+            >
+              {syncSnap.activeSync ? (
+                <div className="p-2.5 rounded-2xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200/80 dark:border-blue-800/70 flex items-center gap-2.5 text-xs text-blue-800 dark:text-blue-200">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600 dark:text-blue-400 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold truncate">
+                      {syncSnap.activeSync.progressMessage || 'Sincronizando con Google Sheets…'}
+                    </p>
+                    {syncSnap.activeSync.progressTotal > 0 && (
+                      <div className="w-full h-1 bg-blue-200/70 dark:bg-blue-900/70 rounded-full mt-1 overflow-hidden">
+                        <div
+                          className="h-full bg-blue-600 rounded-full transition-all duration-300"
+                          style={{
+                            width: `${Math.max(12, Math.min(100, ((syncSnap.activeSync.progressCurrent || 0) / syncSnap.activeSync.progressTotal) * 100))}%`,
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2.5 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200/80 dark:border-amber-800/70 flex items-start justify-between gap-2 text-xs text-amber-900 dark:text-amber-200">
+                  <div className="flex items-start gap-2 min-w-0">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <span className="leading-snug">{syncSnap.lastNotice.message}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={clearLastSyncNotice}
+                    className="text-[11px] font-bold text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded-md hover:bg-amber-100 dark:hover:bg-amber-900/50 shrink-0"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Month Selector with active pill layout transition and finalize trigger */}
         <MonthSelector
@@ -831,8 +925,8 @@ function App() {
                   <Button
                     size="sm"
                     onClick={handleQuickPush}
-                    disabled={quickPushing}
-                    className="h-7.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-2.5 shadow-xs border border-blue-400/30 flex items-center gap-1.5 shrink-0"
+                    disabled={quickPushing || pulling}
+                    className="h-7.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-2.5 shadow-xs border border-blue-400/30 flex items-center gap-1.5 shrink-0 disabled:opacity-60"
                   >
                     <UploadCloud className={`w-3 h-3 ${quickPushing ? 'animate-bounce' : ''}`} />
                     <span>{quickPushing ? 'Subiendo...' : 'Push'}</span>

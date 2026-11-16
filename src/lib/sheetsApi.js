@@ -1,4 +1,4 @@
-import { isDebugEnabled, startTask, logTask } from './debugLogger'
+import { isDebugEnabled, startTask, logTask } from './debugLogger.js'
 
 const STORAGE_KEY = 'sheets_script_url'
 const SPREADSHEET_URL_STORAGE_KEY = 'sheets_spreadsheet_url'
@@ -38,6 +38,72 @@ function notifyPushQueueListeners() {
   })
 }
 
+export function createMutationId(prefix = 'mut') {
+  const rand = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+    : `${Math.random().toString(36).slice(2, 8)}${Math.random().toString(36).slice(2, 6)}`
+  return `${prefix}_${Date.now()}_${rand}`
+}
+
+export function getTaskMutationKey(task) {
+  if (!task) return ''
+  return String(task.mutationId || task.id || '')
+}
+
+/**
+ * Elimina de la cola local ÚNICAMENTE las tareas cuya clave de mutación (mutationId/id)
+ * fue confirmada como 'applied' o 'duplicate' Y que no hayan sido editadas localmente
+ * después de enviarse el paquete.
+ */
+export function applyPushResultsToQueue(submittedTasks = [], serverResults = []) {
+  const confirmedKeys = new Set()
+  const submittedMutationById = new Map()
+
+  ;(Array.isArray(submittedTasks) ? submittedTasks : []).forEach((t) => {
+    if (!t) return
+    const key = getTaskMutationKey(t)
+    if (t.id) submittedMutationById.set(t.id, key)
+  })
+
+  ;(Array.isArray(serverResults) ? serverResults : []).forEach((res) => {
+    if (!res) return
+    if (res.status === 'applied' || res.status === 'duplicate') {
+      const mKey = String(res.mutationId || res.id || '')
+      if (mKey) confirmedKeys.add(mKey)
+    }
+  })
+
+  if (confirmedKeys.size === 0) {
+    return { removedCount: 0, remaining: getPushQueue() }
+  }
+
+  const currentQueue = getPushQueue()
+  let removedCount = 0
+  const remaining = currentQueue.filter((currentTask) => {
+    const curMutationKey = getTaskMutationKey(currentTask)
+    const isConfirmedByMutation = confirmedKeys.has(curMutationKey)
+    const wasConfirmedById = currentTask.id && confirmedKeys.has(String(currentTask.id))
+    const submittedKeyForSlot = currentTask.id ? submittedMutationById.get(currentTask.id) : null
+
+    // Si la tarea actual tiene un mutationId distinto al que se envió, se editó durante el push: NO eliminar.
+    if (submittedKeyForSlot && curMutationKey && submittedKeyForSlot !== curMutationKey) {
+      return true
+    }
+
+    if (isConfirmedByMutation || (!currentTask.mutationId && wasConfirmedById)) {
+      removedCount++
+      return false
+    }
+    return true
+  })
+
+  if (removedCount > 0) {
+    savePushQueue(remaining)
+  }
+
+  return { removedCount, remaining }
+}
+
 export function removePushTask(taskId) {
   const current = getPushQueue()
   const filtered = current.filter((t) => t.id !== taskId)
@@ -49,7 +115,7 @@ export function clearPushQueue() {
   notifyPushQueueListeners()
 }
 
-export { isDebugEnabled, logTask, startTask } from './debugLogger'
+export { isDebugEnabled, logTask, startTask } from './debugLogger.js'
 
 export const DEFAULT_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1KLn5Ow_eoclIyx2LB0P89JC7vwmNSRV60iBjNepoJjA/edit'
 
@@ -588,10 +654,12 @@ export function stageAddExpense(month, category, amount) {
     setCacheEntry('categories', { ...cachedCats, categories: [...cachedCats.categories, cleanCat] })
   }
 
-  // 4. Encolar tarea en la pila de Push
+  // 4. Encolar tarea en la pila de Push con identificador de mutación único
   const queue = getPushQueue()
+  const taskId = `add_exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
   const task = {
-    id: `add_exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    id: taskId,
+    mutationId: createMutationId('add_exp'),
     action: 'addExpense',
     month,
     payload: { category: cleanCat, amount: numAmt, localRow },
@@ -638,7 +706,7 @@ export function stageUpdateExpense(month, row, oldCategory, oldAmount, newCatego
   }
   setCacheEntry('summary_' + month, updatedSummary)
 
-  // 3. Cola de Push
+  // 3. Cola de Push (si se modifica una tarea local en vuelo, regenera mutationId)
   const queue = getPushQueue()
   let handled = false
   const updatedQueue = queue.map((t) => {
@@ -646,11 +714,13 @@ export function stageUpdateExpense(month, row, oldCategory, oldAmount, newCatego
       handled = true
       return {
         ...t,
+        mutationId: createMutationId('add_exp'),
         payload: { ...t.payload, category: cleanCat, amount: numAmt },
         description: `${cleanCat} · ${numAmt.toFixed(2)} €`,
         badge: `+${numAmt.toFixed(2)} €`,
         category: cleanCat,
         amount: numAmt,
+        timestamp: Date.now(),
       }
     }
     return t
@@ -659,6 +729,7 @@ export function stageUpdateExpense(month, row, oldCategory, oldAmount, newCatego
   if (!handled) {
     updatedQueue.push({
       id: `upd_exp_${month}_${row}_${Date.now()}`,
+      mutationId: createMutationId('upd_exp'),
       action: 'updateExpense',
       month,
       payload: { row, oldCategory, oldAmount, newCategory: cleanCat, newAmount: numAmt },
@@ -705,6 +776,7 @@ export function stageDeleteExpense(month, row, category, amount) {
   } else {
     const task = {
       id: `del_exp_${month}_${row}_${Date.now()}`,
+      mutationId: createMutationId('del_exp'),
       action: 'deleteExpense',
       month,
       payload: { row, category, amount: numAmt },
@@ -766,6 +838,7 @@ export function stageSetFixedExpenseStatus(month, row, active, category = '', am
   const filteredQueue = queue.filter((t) => t.id !== targetId)
   const task = {
     id: targetId,
+    mutationId: createMutationId('fix_st'),
     action: 'setFixedExpenseStatus',
     month,
     payload: { row: numRow, active },
@@ -826,6 +899,7 @@ export function stageSetFixedExpenseAmount(month, row, amount, category = '') {
   const filteredQueue = queue.filter((t) => t.id !== targetId)
   const task = {
     id: targetId,
+    mutationId: createMutationId('fix_amt'),
     action: 'setFixedExpenseAmount',
     month,
     payload: { row: numRow, amount: numAmount, category: catName },
@@ -864,6 +938,7 @@ export function stageSetTotalIncome(month, amount, category = 'Euromar') {
   const filteredQueue = queue.filter((t) => t.id !== targetId)
   const task = {
     id: targetId,
+    mutationId: createMutationId('inc'),
     action: 'setTotalIncome',
     month,
     payload: { amount: numAmount, category },
@@ -901,6 +976,7 @@ export function stageSetSavingsGoal(month, amount) {
   const filteredQueue = queue.filter((t) => t.id !== targetId)
   const task = {
     id: targetId,
+    mutationId: createMutationId('sav'),
     action: 'setSavingsGoal',
     month,
     payload: { amount: numAmount },
@@ -921,6 +997,7 @@ export function stageSetMonthFinalized(month, finalized) {
   const filteredQueue = queue.filter((t) => t.id !== targetId)
   const task = {
     id: targetId,
+    mutationId: createMutationId('mfin'),
     action: 'setMonthFinalized',
     month,
     payload: { finalized: Boolean(finalized) },
@@ -961,6 +1038,7 @@ export function stageAddIncome(month, category, amount) {
   const queue = getPushQueue()
   const task = {
     id: `add_inc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    mutationId: createMutationId('add_inc'),
     action: 'addIncome',
     month,
     payload: { category: cleanCat, amount: numAmt },
@@ -976,233 +1054,238 @@ export function stageAddIncome(month, category, amount) {
   return { success: true, summary: updatedSummary }
 }
 
-/**
- * Descarga de Google Sheets bajo petición (Pull on Demand)
- */
-export async function pullMonthDataFromSheets(month) {
-  // getMonthData ya incluye gastos fijos; evitar una segunda lectura completa de la hoja.
-  const data = await callApi({ action: 'getMonthData', month })
-  const fixedData = data
-
-  // 1. Procesar y guardar gastos fijos
-  let fixedExpensesList = []
-  let totalFixed = 0
-  const rawFixed = (fixedData?.fixedExpenses && fixedData.fixedExpenses.length > 0)
-    ? fixedData.fixedExpenses
-    : (data?.fixedExpenses && data.fixedExpenses.length > 0 ? data.fixedExpenses : null)
-
-  if (rawFixed && Array.isArray(rawFixed)) {
-    fixedExpensesList = sanitizeAndMergeFixedExpenses([], rawFixed)
-    totalFixed = fixedExpensesList.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
-    setCacheEntry('fixed_expenses_' + month, {
-      month,
-      fixedExpenses: fixedExpensesList,
-      totalActive: totalFixed,
-      hasCheckbox: fixedData?.hasCheckbox ?? data?.hasCheckbox ?? true,
-    })
-  } else {
-    const cachedFixed = getCachedFixedExpenses(month)
-    if (cachedFixed?.fixedExpenses && cachedFixed.fixedExpenses.length > 0) {
-      fixedExpensesList = cachedFixed.fixedExpenses
-      totalFixed = cachedFixed.totalActive || fixedExpensesList.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+export function ensureQueueMutationIds() {
+  const current = getPushQueue()
+  let changed = false
+  const upgraded = current.map((t) => {
+    if (t && !t.mutationId) {
+      changed = true
+      return { ...t, mutationId: createMutationId(t.action || 'mut') }
     }
+    return t
+  })
+  if (changed) savePushQueue(upgraded)
+  return upgraded
+}
+
+export function applyMonthsDataCache(monthsData, options = {}) {
+  if (!monthsData || typeof monthsData !== 'object') return
+  Object.entries(monthsData).forEach(([m, mData]) => {
+    if (mData && !mData.error) {
+      saveSingleMonthDataToCache(m, mData, options)
+    }
+  })
+}
+
+export function applyPulledSyncPayloadToCache(type, result, options = {}) {
+  if (!result || typeof result !== 'object') return null
+  const preserveLocalQueue = options.preserveLocalQueue !== false
+
+  if (type === 'pull_month') {
+    const targetMonth = result.month || result.monthData?.month
+    let saved = null
+    if (targetMonth && result.monthData && !result.monthData.error) {
+      saved = saveSingleMonthDataToCache(targetMonth, result.monthData, { preserveLocalQueue })
+    }
+    if (result.categories && (result.categories.categories?.length > 0 || result.categories.incomeCategories?.length > 0)) {
+      setCacheEntry('categories', {
+        categories: Array.isArray(result.categories.categories) ? result.categories.categories : [],
+        incomeCategories: Array.isArray(result.categories.incomeCategories) ? result.categories.incomeCategories : [],
+      })
+    }
+    return { month: targetMonth, saved, monthData: result.monthData }
   }
 
-  // 2. Procesar Gastos Variables
-  if (data?.expenses) {
-    setCacheEntry('expenses_' + month, { expenses: data.expenses, month, lastRow: data.lastRow })
+  // pull_full
+  const normMonth = result.month || result.monthData?.month || 'Septiembre'
+  let savedMain = null
+  if (result.monthData && !result.monthData.error) {
+    savedMain = saveSingleMonthDataToCache(normMonth, result.monthData, { preserveLocalQueue })
   }
-
-  // 3. Procesar Ingresos
-  if (data?.incomes) {
-    setCacheEntry('incomes_' + month, { incomes: data.incomes, month })
+  if (result.colindantMonths && typeof result.colindantMonths === 'object') {
+    Object.entries(result.colindantMonths).forEach(([mName, mData]) => {
+      if (mData && !mData.error) {
+        saveSingleMonthDataToCache(mName, mData, { preserveLocalQueue })
+      }
+    })
   }
-
-  // 4. Consolidar Resumen
-  const baseSummary = data?.summary || fixedData?.summary || getCachedSummary(month) || {}
-  const income = baseSummary.income ?? baseSummary.totalIncome ?? 0
-  const variable = baseSummary.variableExpenses ?? baseSummary.variable ?? 0
-  const savingsGoal = baseSummary.desiredSavings || 0
-
-  // El total de gastos fijos: usar totalFixed si las casillas están activas, o baseSummary
-  const serverFixed = baseSummary.fixedExpenses ?? baseSummary.fixed ?? 0
-  const finalFixed = totalFixed > 0 ? totalFixed : serverFixed
-  const totalExp = Math.round((finalFixed + variable) * 100) / 100
-  const remaining = Math.round((income - totalExp - savingsGoal) * 100) / 100
-
-  const consolidatedSummary = {
-    ...baseSummary,
-    month,
-    income: Math.round(income * 100) / 100,
-    fixedExpenses: Math.round(finalFixed * 100) / 100,
-    variableExpenses: Math.round(variable * 100) / 100,
-    totalExpenses: totalExp,
-    desiredSavings: Math.round(savingsGoal * 100) / 100,
-    remainingMonth: remaining,
-    savings: remaining,
+  if (result.controlPanel && result.controlPanel.monthlyData) {
+    setCacheEntry('control_panel_data', result.controlPanel)
   }
-
-  setCacheEntry('summary_' + month, consolidatedSummary)
-
-  return {
-    ...data,
-    summary: consolidatedSummary,
-    expenses: data?.expenses || [],
-    fixedExpenses: fixedExpensesList,
-    totalActiveFixed: finalFixed,
+  if (result.categories && (result.categories.categories?.length > 0 || result.categories.incomeCategories?.length > 0)) {
+    setCacheEntry('categories', {
+      categories: Array.isArray(result.categories.categories) ? result.categories.categories : [],
+      incomeCategories: Array.isArray(result.categories.incomeCategories) ? result.categories.incomeCategories : [],
+    })
   }
+  return { month: normMonth, saved: savedMain, monthData: result.monthData }
 }
 
 /**
- * Ejecuta el Push de todas las tareas acumuladas en la pila a Google Sheets.
+ * Descarga de Google Sheets bajo petición (Pull on Demand)
+ */
+export async function pullMonthDataFromSheets(month, options = {}) {
+  const preserveLocalQueue = options.preserveLocalQueue !== false
+  const data = await callApi({ action: 'getMonthData', month })
+  const saved = saveSingleMonthDataToCache(month, data, { preserveLocalQueue })
+
+  return {
+    ...data,
+    summary: saved?.summary || data?.summary,
+    expenses: saved?.expenses || data?.expenses || [],
+    fixedExpenses: saved?.fixedExpenses || data?.fixedExpenses || [],
+    totalActiveFixed: saved?.totalActiveFixed ?? 0,
+    reappliedLocalCount: saved?.reappliedLocalCount ?? 0,
+  }
+}
+
+function buildBatchTaskPayload(t) {
+  return {
+    id: t.id,
+    mutationId: getTaskMutationKey(t),
+    action: t.action,
+    month: t.month,
+    payload: t.payload,
+  }
+}
+
+async function queryTaskStatuses(mutationIds) {
+  if (!Array.isArray(mutationIds) || mutationIds.length === 0) return {}
+  const res = await callApi(
+    {
+      action: 'getTaskStatuses',
+      mutationIds: JSON.stringify(mutationIds),
+    },
+    'POST'
+  )
+  return res?.statuses || {}
+}
+
+/**
+ * Ejecuta el Push de todas las tareas acumuladas en la pila a Google Sheets
+ * usando verificación de capacidades, idempotencia por mutationId y limpieza quirúrgica.
  */
 export async function pushAllChanges(onProgress = null) {
-  const tasks = getPushQueue()
+  const tasks = ensureQueueMutationIds()
   if (tasks.length === 0) {
-    return { success: true, count: 0, message: 'No hay cambios pendientes' }
+    return { success: true, count: 0, appliedCount: 0, duplicateCount: 0, failedCount: 0, message: 'No hay cambios pendientes' }
   }
 
-  // 1. Intento por lote rápido (Batch Push - Apps Script v3.6.0)
-  try {
-    const batchPayload = tasks.map((t) => ({
-      action: t.action,
-      month: t.month,
-      payload: t.payload,
-    }))
-
-    const batchRes = await callApi(
-      {
-        action: 'pushBatchChanges',
-        tasks: JSON.stringify(batchPayload),
-      },
-      'POST'
+  // 1. Verificar que el Apps Script remoto soporta idempotencia (v4.1+)
+  const pingInfo = await callApi({ action: 'ping' }, 'GET')
+  const caps = pingInfo?.capabilities || {}
+  if (!caps.idempotency || !caps.taskIds) {
+    throw new Error(
+      'Tu código de Google Apps Script es una versión anterior sin sincronización idempotente (v4.1+). Abre Ajustes ⚙️, copia el script actualizado y crea una Nueva implementación para subir cambios sin riesgo de duplicados.'
     )
-
-    if (batchRes && batchRes.success === true && batchRes.processed >= tasks.length) {
-      if (batchRes.monthsData) {
-        Object.entries(batchRes.monthsData).forEach(([m, mData]) => {
-          if (mData?.summary) setCacheEntry('summary_' + m, mData.summary)
-          if (mData?.expenses) {
-            setCacheEntry('expenses_' + m, {
-              expenses: mData.expenses,
-              month: m,
-              lastRow: mData.lastRow,
-            })
-          }
-          if (mData?.fixedExpenses) {
-            const safeList = sanitizeAndMergeFixedExpenses([], mData.fixedExpenses)
-            const total = safeList.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
-            setCacheEntry('fixed_expenses_' + m, {
-              month: m,
-              fixedExpenses: safeList,
-              totalActive: total,
-              hasCheckbox: mData.hasCheckbox ?? true,
-            })
-          }
-        })
-      }
-      clearPushQueue()
-      return { success: true, count: tasks.length }
-    }
-  } catch (batchErr) {
-    console.warn('Batch push falló o versión previa de Apps Script, procediendo secuencialmente:', batchErr.message)
   }
 
-  // 2. Envío secuencial con notificación de progreso
-  // Si el lote se aplicó pero se perdió la respuesta, no repetir altas ya visibles.
-  // Esto evita duplicados por timeout o cortes de red después de escribir en Sheets.
-  let tasksToSend = tasks
-  try {
-    const addTasks = tasks.filter((task) => task.action === 'addExpense')
-    const months = [...new Set(addTasks.map((task) => task.month))]
-    const serverCounts = {}
-    const baselineCounts = {}
-    tasks.forEach((task) => {
-      if (task.action !== 'addExpense') return
-      const cached = getCachedExpenses(task.month)
-      ;(cached?.expenses || []).filter((expense) => !expense.isLocal).forEach((expense) => {
-        const key = `${task.month}|${String(expense.category || '').trim().toLowerCase()}|${Number(expense.amount || 0).toFixed(2)}`
-        baselineCounts[key] = (baselineCounts[key] || 0) + 1
-      })
-    })
-    for (const month of months) {
-      const data = await callApi({ action: 'getMonthData', month })
-      ;(data.expenses || []).forEach((expense) => {
-        const key = `${month}|${String(expense.category || '').trim().toLowerCase()}|${Number(expense.amount || 0).toFixed(2)}`
-        serverCounts[key] = (serverCounts[key] || 0) + 1
-      })
-    }
+  // 2. Enviar en lotes seguros de hasta 20 tareas con reconciliación ante cortes de red
+  const CHUNK_SIZE = 20
+  let totalConfirmed = 0
+  let totalApplied = 0
+  let totalDuplicates = 0
+  let totalFailed = 0
+  const allFailures = []
 
-    const consumed = {}
-    tasksToSend = tasks.filter((task) => {
-      if (task.action !== 'addExpense') return true
-      const key = `${task.month}|${String(task.payload?.category || '').trim().toLowerCase()}|${Number(task.payload?.amount || 0).toFixed(2)}`
-      const alreadyAvailable = Math.max(0, (serverCounts[key] || 0) - (baselineCounts[key] || 0))
-      const alreadyConsumed = consumed[key] || 0
-      if (alreadyConsumed < alreadyAvailable) {
-        consumed[key] = alreadyConsumed + 1
-        return false
-      }
-      consumed[key] = alreadyConsumed + 1
-      return true
-    })
-  } catch (reconcileErr) {
-    console.warn('No se pudo reconciliar el lote antes del fallback:', reconcileErr.message)
-    tasksToSend = tasks
-  }
+  for (let offset = 0; offset < tasks.length; offset += CHUNK_SIZE) {
+    const chunk = tasks.slice(offset, offset + CHUNK_SIZE)
+    onProgress?.({ current: offset, total: tasks.length })
 
-  let completed = 0
-  const failed = []
+    let chunkPending = chunk
+    let attempt = 0
+    const batchPayload = chunkPending.map(buildBatchTaskPayload)
 
-  for (let i = 0; i < tasksToSend.length; i++) {
-    const t = tasksToSend[i]
-    onProgress?.({ current: i + 1, total: tasksToSend.length, task: t })
+    let batchRes = null
+    let lastNetworkErr = null
 
-    try {
-      if (t.action === 'addExpense') {
-        await addExpenseDirect(t.month, t.payload.category, t.payload.amount)
-      } else if (t.action === 'updateExpense') {
-        await updateExpense(
-          t.month,
-          t.payload.row,
-          t.payload.oldCategory,
-          t.payload.oldAmount,
-          t.payload.newCategory,
-          t.payload.newAmount
+    while (attempt < 2 && chunkPending.length > 0) {
+      attempt++
+      try {
+        batchRes = await callApi(
+          {
+            action: 'pushBatchChanges',
+            batchId: createMutationId('batch'),
+            tasks: JSON.stringify(chunkPending.map(buildBatchTaskPayload)),
+          },
+          'POST'
         )
-      } else if (t.action === 'deleteExpense') {
-        await deleteExpense(t.month, t.payload.row, t.payload.category, t.payload.amount)
-      } else if (t.action === 'setFixedExpenseStatus') {
-        await setFixedExpenseStatus(t.month, t.payload.row, t.payload.active)
-      } else if (t.action === 'setFixedExpenseAmount') {
-        await setFixedExpenseAmount(t.month, t.payload.row, t.payload.amount, t.payload.category)
-      } else if (t.action === 'setTotalIncome') {
-        await setTotalIncome(t.month, t.payload.amount, t.payload.category)
-      } else if (t.action === 'setSavingsGoal') {
-        await setSavingsGoal(t.month, t.payload.amount)
-      } else if (t.action === 'setMonthFinalized') {
-        await callApi({
-          action: 'setMonthFinalized',
-          month: t.month,
-          finalized: t.payload.finalized ? 'true' : 'false',
-        })
-      } else if (t.action === 'addIncome') {
-        await addIncomeDirect(t.month, t.payload.category, t.payload.amount)
+        lastNetworkErr = null
+        break
+      } catch (err) {
+        lastNetworkErr = err
+        // Si falló por red/timeout tras enviar el POST, consultamos getTaskStatuses antes de reintentar
+        try {
+          const statuses = await queryTaskStatuses(chunkPending.map(getTaskMutationKey))
+          const recoveredResults = []
+          const stillUnknown = []
+          chunkPending.forEach((t) => {
+            const mKey = getTaskMutationKey(t)
+            if (statuses[mKey]?.status === 'applied') {
+              recoveredResults.push({ id: t.id, mutationId: mKey, status: 'duplicate', row: statuses[mKey].row || null })
+            } else {
+              stillUnknown.push(t)
+            }
+          })
+          if (recoveredResults.length > 0) {
+            applyPushResultsToQueue(chunkPending, recoveredResults)
+            totalConfirmed += recoveredResults.length
+            totalDuplicates += recoveredResults.length
+          }
+          chunkPending = stillUnknown
+        } catch (_) {
+          // Sin conectividad para verificar: abortamos sin reenviar a ciegas
+          break
+        }
       }
-      completed++
-    } catch (taskErr) {
-      console.error('Error procesando tarea en push secuencial:', t, taskErr)
-      failed.push(t)
     }
+
+    if (lastNetworkErr && chunkPending.length > 0) {
+      throw new Error(
+        `Error de red durante la subida (confirmados ${totalConfirmed} de ${tasks.length}). Reintenta cuando tengas conexión: ${lastNetworkErr.message}`
+      )
+    }
+
+    if (batchRes && Array.isArray(batchRes.results)) {
+      applyPushResultsToQueue(chunkPending, batchRes.results)
+      if (batchRes.monthsData) {
+        applyMonthsDataCache(batchRes.monthsData, { preserveLocalQueue: true })
+      }
+      batchRes.results.forEach((r) => {
+        if (r.status === 'applied') {
+          totalConfirmed++
+          totalApplied++
+        } else if (r.status === 'duplicate') {
+          totalConfirmed++
+          totalDuplicates++
+        } else {
+          totalFailed++
+          allFailures.push(r)
+        }
+      })
+    } else if (batchPayload.length > 0 && chunkPending.length > 0) {
+      throw new Error('Respuesta inesperada de Google Apps Script en pushBatchChanges (sin resultados individuales).')
+    }
+
+    onProgress?.({ current: Math.min(offset + chunk.length, tasks.length), total: tasks.length })
   }
 
-  savePushQueue(failed)
-
-  if (failed.length > 0) {
-    throw new Error(`Se subieron ${completed} de ${tasksToSend.length} cambios. ${failed.length} no pudieron guardarse.`)
+  if (totalFailed > 0) {
+    const firstErr = allFailures[0]?.error || 'Error aplicando alguna tarea'
+    const partialErr = new Error(`Se confirmaron ${totalConfirmed} de ${tasks.length} cambios. Fallaron ${totalFailed}: ${firstErr}`)
+    partialErr.partial = totalConfirmed > 0
+    partialErr.confirmedCount = totalConfirmed
+    partialErr.failedCount = totalFailed
+    throw partialErr
   }
 
-  return { success: true, count: tasks.length }
+  return {
+    success: true,
+    count: totalConfirmed,
+    appliedCount: totalApplied,
+    duplicateCount: totalDuplicates,
+    failedCount: 0,
+  }
 }
 
 export async function setSavingsGoal(month, amount) {
@@ -1718,11 +1801,108 @@ export async function getFixedExpenses(month) {
 }
 
 /**
+ * Reaplica las tareas locales aún pendientes de push sobre la caché recién descargada
+ * de un mes para que una descarga en segundo plano no borre ediciones locales sin subir.
+ */
+function reapplyPendingTasksOnMonth(month, baseExpenses, baseFixedList, baseSummary) {
+  const pendingForMonth = getPushQueue().filter((t) => t && t.month === month)
+  if (pendingForMonth.length === 0) {
+    return {
+      expenses: baseExpenses,
+      fixedExpenses: baseFixedList,
+      summary: baseSummary,
+      reappliedCount: 0,
+    }
+  }
+
+  let expenses = Array.isArray(baseExpenses) ? baseExpenses.map((e) => ({ ...e })) : []
+  let fixedExpenses = Array.isArray(baseFixedList) ? baseFixedList.map((f) => ({ ...f })) : []
+  let income = baseSummary.income || 0
+  let variable = baseSummary.variableExpenses || 0
+  let desiredSavings = baseSummary.desiredSavings || 0
+
+  pendingForMonth.forEach((t) => {
+    const p = t.payload || {}
+    if (t.action === 'addExpense') {
+      const amt = parseFloat(String(p.amount).replace(',', '.')) || 0
+      const localRow = p.localRow || t.id
+      if (!expenses.some((e) => e.row === localRow)) {
+        expenses.push({ row: localRow, category: p.category, amount: amt, isLocal: true })
+        variable += amt
+      }
+    } else if (t.action === 'updateExpense') {
+      const newAmt = parseFloat(String(p.newAmount).replace(',', '.')) || 0
+      expenses = expenses.map((e) => {
+        if (e.row === p.row) {
+          const prevAmt = parseFloat(String(e.amount).replace(',', '.')) || 0
+          variable += (newAmt - prevAmt)
+          return { ...e, category: p.newCategory, amount: newAmt, isLocal: true }
+        }
+        return e
+      })
+    } else if (t.action === 'deleteExpense') {
+      const target = expenses.find((e) => e.row === p.row)
+      if (target) {
+        const tgtAmt = parseFloat(String(target.amount).replace(',', '.')) || 0
+        variable = Math.max(0, variable - tgtAmt)
+        expenses = expenses.filter((e) => e.row !== p.row)
+      }
+    } else if (t.action === 'setFixedExpenseStatus') {
+      const targetRow = parseInt(p.row, 10)
+      fixedExpenses = sanitizeAndMergeFixedExpenses(
+        fixedExpenses,
+        fixedExpenses.map((fe) => (fe.row === targetRow ? { ...fe, active: Boolean(p.active) } : fe))
+      )
+    } else if (t.action === 'setFixedExpenseAmount') {
+      const targetRow = parseInt(p.row, 10)
+      const numAmt = parseFloat(String(p.amount).replace(',', '.')) || 0
+      fixedExpenses = sanitizeAndMergeFixedExpenses(
+        fixedExpenses,
+        fixedExpenses.map((fe) =>
+          fe.row === targetRow ? { ...fe, amount: numAmt, ...(p.category ? { category: p.category } : {}) } : fe
+        )
+      )
+    } else if (t.action === 'setTotalIncome') {
+      income = parseFloat(String(p.amount).replace(',', '.')) || 0
+    } else if (t.action === 'addIncome') {
+      income += parseFloat(String(p.amount).replace(',', '.')) || 0
+    } else if (t.action === 'setSavingsGoal') {
+      desiredSavings = parseFloat(String(p.amount).replace(',', '.')) || 0
+    }
+  })
+
+  const totalFixed = fixedExpenses.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+  const finalFixed = totalFixed > 0 || fixedExpenses.length > 0 ? totalFixed : (baseSummary.fixedExpenses || 0)
+  const finalVar = Math.round(variable * 100) / 100
+  const totalExp = Math.round((finalFixed + finalVar) * 100) / 100
+  const remaining = Math.round((income - totalExp - desiredSavings) * 100) / 100
+
+  return {
+    expenses,
+    fixedExpenses,
+    summary: {
+      ...baseSummary,
+      month,
+      income: Math.round(income * 100) / 100,
+      fixedExpenses: Math.round(finalFixed * 100) / 100,
+      variableExpenses: finalVar,
+      totalExpenses: totalExp,
+      desiredSavings: Math.round(desiredSavings * 100) / 100,
+      remainingMonth: remaining,
+      savings: remaining,
+    },
+    reappliedCount: pendingForMonth.length,
+  }
+}
+
+/**
  * Guarda los datos de un mes completo en el almacenamiento local:
  * Gastos fijos con casillas, gastos variables, ingresos y resumen mensual consolidado.
+ * Por defecto preserva encima las mutaciones locales aún pendientes en pushQueue.
  */
-export function saveSingleMonthDataToCache(month, data) {
+export function saveSingleMonthDataToCache(month, data, options = {}) {
   if (!data || data.error) return null
+  const preserveLocalQueue = options.preserveLocalQueue !== false
 
   // 1. Gastos fijos con estado exacto de casillas (active: true / false)
   let fixedExpensesList = []
@@ -1730,12 +1910,6 @@ export function saveSingleMonthDataToCache(month, data) {
   if (data.fixedExpenses && Array.isArray(data.fixedExpenses) && data.fixedExpenses.length > 0) {
     fixedExpensesList = sanitizeAndMergeFixedExpenses([], data.fixedExpenses)
     totalFixed = fixedExpensesList.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
-    setCacheEntry('fixed_expenses_' + month, {
-      month,
-      fixedExpenses: fixedExpensesList,
-      totalActive: totalFixed,
-      hasCheckbox: data.hasCheckbox ?? true,
-    })
   } else {
     const cachedFixed = getCachedFixedExpenses(month)
     if (cachedFixed?.fixedExpenses && cachedFixed.fixedExpenses.length > 0) {
@@ -1745,13 +1919,7 @@ export function saveSingleMonthDataToCache(month, data) {
   }
 
   // 2. Gastos Variables
-  if (data.expenses && Array.isArray(data.expenses)) {
-    setCacheEntry('expenses_' + month, {
-      expenses: data.expenses,
-      month,
-      lastRow: data.lastRow || 22,
-    })
-  }
+  let expensesList = Array.isArray(data.expenses) ? data.expenses : (getCachedExpenses(month)?.expenses || [])
 
   // 3. Ingresos
   if (data.incomes && Array.isArray(data.incomes)) {
@@ -1761,7 +1929,7 @@ export function saveSingleMonthDataToCache(month, data) {
     })
   }
 
-  // 4. Resumen consolidado
+  // 4. Resumen consolidado base
   const baseSummary = data.summary || {}
   const income = baseSummary.income ?? baseSummary.totalIncome ?? 0
   const variable = baseSummary.variableExpenses ?? baseSummary.variable ?? 0
@@ -1771,7 +1939,7 @@ export function saveSingleMonthDataToCache(month, data) {
   const totalExp = Math.round((finalFixed + variable) * 100) / 100
   const remaining = Math.round((income - totalExp - savingsGoal) * 100) / 100
 
-  const consolidatedSummary = {
+  let consolidatedSummary = {
     ...baseSummary,
     month,
     income: Math.round(income * 100) / 100,
@@ -1782,15 +1950,44 @@ export function saveSingleMonthDataToCache(month, data) {
     remainingMonth: remaining,
     savings: remaining,
   }
+
+  let reappliedLocalCount = 0
+  if (preserveLocalQueue) {
+    const merged = reapplyPendingTasksOnMonth(month, expensesList, fixedExpensesList, consolidatedSummary)
+    expensesList = merged.expenses
+    fixedExpensesList = merged.fixedExpenses
+    consolidatedSummary = merged.summary
+    reappliedLocalCount = merged.reappliedCount
+  }
+
+  if (fixedExpensesList.length > 0 || (data.fixedExpenses && Array.isArray(data.fixedExpenses))) {
+    const activeTotal = fixedExpensesList.reduce((acc, fe) => (fe.active ? acc + (fe.amount || 0) : acc), 0)
+    setCacheEntry('fixed_expenses_' + month, {
+      month,
+      fixedExpenses: fixedExpensesList,
+      totalActive: activeTotal,
+      hasCheckbox: data.hasCheckbox ?? true,
+    })
+  }
+
+  if (data.expenses && Array.isArray(data.expenses)) {
+    setCacheEntry('expenses_' + month, {
+      expenses: expensesList,
+      month,
+      lastRow: data.lastRow || 22,
+    })
+  }
+
   setCacheEntry('summary_' + month, consolidatedSummary)
 
   return {
     summary: consolidatedSummary,
-    expenses: data.expenses || [],
+    expenses: expensesList,
     fixedExpenses: fixedExpensesList,
     incomes: data.incomes || [],
-    totalActiveFixed: finalFixed,
+    totalActiveFixed: consolidatedSummary.fixedExpenses,
     hasCheckbox: data.hasCheckbox ?? true,
+    reappliedLocalCount,
   }
 }
 
@@ -1802,10 +1999,11 @@ export function saveSingleMonthDataToCache(month, data) {
  * 3. Datos de las pestañas de PANEL DE CONTROL ('Data gráficos', 'Panel de control', 'Plan de ahorro').
  * 4. Categorías de gastos e ingresos.
  */
-export async function fullSyncFromSheets(targetMonth) {
+export async function fullSyncFromSheets(targetMonth, options = {}) {
   const normMonth = targetMonth || 'Septiembre'
+  const preserveLocalQueue = options.preserveLocalQueue !== false
 
-  // Intento 1: Llamada rápida unificada v4.0.0 (getFullSyncData)
+  // Intento 1: Llamada rápida unificada v4.0.0+ (getFullSyncData)
   try {
     const res = await callApi({
       action: 'getFullSyncData',
@@ -1813,30 +2011,12 @@ export async function fullSyncFromSheets(targetMonth) {
     })
 
     if (res && res.success && res.monthData) {
-      // 1. Guardar mes actual
-      saveSingleMonthDataToCache(normMonth, res.monthData)
-
-      // 2. Guardar meses colindantes
-      if (res.colindantMonths && typeof res.colindantMonths === 'object') {
-        Object.entries(res.colindantMonths).forEach(([mName, mData]) => {
-          if (mData && !mData.error) {
-            saveSingleMonthDataToCache(mName, mData)
-          }
-        })
-      }
-
-      // 3. Guardar Panel de Control
-      if (res.controlPanel && res.controlPanel.success) {
-        setCacheEntry('control_panel_data', res.controlPanel)
-      }
-
-      // 4. Guardar Categorías
-      if (res.categories && (res.categories.categories?.length > 0 || res.categories.incomeCategories?.length > 0)) {
-        setCacheEntry('categories', res.categories)
-      }
+      applyPulledSyncPayloadToCache('pull_full', res, { preserveLocalQueue })
 
       return {
         success: true,
+        partial: false,
+        failedParts: [],
         month: normMonth,
         monthData: res.monthData,
         colindantMonths: res.colindantMonths,
@@ -1845,24 +2025,37 @@ export async function fullSyncFromSheets(targetMonth) {
       }
     }
   } catch (syncErr) {
-    console.warn('Llamada unificada getFullSyncData no disponible en versión remota, ejecutando descarga paralela modular:', syncErr.message)
+    console.warn('Llamada unificada getFullSyncData falló o no disponible, ejecutando descarga modular:', syncErr.message)
   }
 
-  // Fallback transparente: Descarga concurrente de mes actual, colindantes, panel de control y categorías
+  // Fallback transparente: Descarga concurrente con seguimiento estricto de éxitos/fallos por parte
   const targetIdx = ALL_MONTHS.indexOf(normMonth) !== -1 ? ALL_MONTHS.indexOf(normMonth) : 8
   const prevMonth = ALL_MONTHS[(targetIdx - 1 + 12) % 12]
   const nextMonth = ALL_MONTHS[(targetIdx + 1) % 12]
 
   const [mainRes, prevRes, nextRes, cpRes, catRes] = await Promise.allSettled([
-    pullMonthDataFromSheets(normMonth),
-    pullMonthDataFromSheets(prevMonth),
-    pullMonthDataFromSheets(nextMonth),
+    pullMonthDataFromSheets(normMonth, { preserveLocalQueue }),
+    pullMonthDataFromSheets(prevMonth, { preserveLocalQueue }),
+    pullMonthDataFromSheets(nextMonth, { preserveLocalQueue }),
     getControlPanelData(true),
     getCategories(),
   ])
 
+  const failedParts = []
+  if (mainRes.status === 'rejected') failedParts.push(`${normMonth}: ${mainRes.reason?.message || 'Error'}`)
+  if (prevRes.status === 'rejected') failedParts.push(`${prevMonth}: ${prevRes.reason?.message || 'Error'}`)
+  if (nextRes.status === 'rejected') failedParts.push(`${nextMonth}: ${nextRes.reason?.message || 'Error'}`)
+  if (cpRes.status === 'rejected') failedParts.push(`Panel de control: ${cpRes.reason?.message || 'Error'}`)
+  if (catRes.status === 'rejected') failedParts.push(`Categorías: ${catRes.reason?.message || 'Error'}`)
+
+  if (mainRes.status === 'rejected' && failedParts.length === 5) {
+    throw new Error(mainRes.reason?.message || 'No se pudo descargar ningún dato de Google Sheets')
+  }
+
   return {
-    success: true,
+    success: failedParts.length === 0,
+    partial: failedParts.length > 0,
+    failedParts,
     month: normMonth,
     monthData: mainRes.status === 'fulfilled' ? mainRes.value : null,
     colindantMonths: {

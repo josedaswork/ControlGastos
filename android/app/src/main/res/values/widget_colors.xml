@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_card_bg">#FFFFFF</color>
+    <color name="widget_card_border">#E2E8F0</color>
+    <color name="widget_row_bg">#F1F5F9</color>
+    <color name="widget_badge_bg">#DBEAFE</color>
+    <color name="widget_badge_text">#1D4ED8</color>
+    <color name="widget_text_primary">#0F172A</color>
+    <color name="widget_text_secondary">#64748B</color>
+    <color name="widget_button_primary_bg">#2563EB</color>
+    <color name="widget_button_primary_text">#FFFFFF</color>
+    <color name="widget_button_secondary_bg">#E2E8F0</color>
+    <color name="widget_button_secondary_text">#0F172A</color>
+</resources>

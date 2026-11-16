@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Outer 2x4 card frame -->
+    <item>
+        <shape android:shape="rectangle">
+            <size
+                android:width="140dp"
+                android:height="260dp" />
+            <corners android:radius="20dp" />
+            <solid android:color="@color/widget_card_bg" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/widget_card_border" />
+        </shape>
+    </item>
+
+    <!-- Header bar placeholder -->
+    <item
+        android:top="14dp"
+        android:left="14dp"
+        android:right="44dp"
+        android:bottom="232dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="6dp" />
+            <solid android:color="@color/widget_button_primary_bg" />
+        </shape>
+    </item>
+
+    <!-- Ranked list bars placeholder -->
+    <item
+        android:top="48dp"
+        android:left="14dp"
+        android:right="14dp"
+        android:bottom="184dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="10dp" />
+            <solid android:color="@color/widget_row_bg" />
+        </shape>
+    </item>
+    <item
+        android:top="84dp"
+        android:left="14dp"
+        android:right="14dp"
+        android:bottom="148dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="10dp" />
+            <solid android:color="@color/widget_row_bg" />
+        </shape>
+    </item>
+    <item
+        android:top="120dp"
+        android:left="14dp"
+        android:right="14dp"
+        android:bottom="112dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="10dp" />
+            <solid android:color="@color/widget_row_bg" />
+        </shape>
+    </item>
+    <item
+        android:top="156dp"
+        android:left="14dp"
+        android:right="14dp"
+        android:bottom="76dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="10dp" />
+            <solid android:color="@color/widget_row_bg" />
+        </shape>
+    </item>
+
+    <!-- Action button placeholder -->
+    <item
+        android:top="214dp"
+        android:left="14dp"
+        android:right="14dp"
+        android:bottom="14dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="10dp" />
+            <solid android:color="@color/widget_button_primary_bg" />
+        </shape>
+    </item>
+</layer-list>

@@ -4,4 +4,18 @@
     <string name="title_activity_main">Control Gastos</string>
     <string name="package_name">com.controlgastos.app</string>
     <string name="custom_url_scheme">com.controlgastos.app</string>
+
+    <!-- Native Home Screen Widget Strings -->
+    <string name="widget_category_count_name">Resumen Categorías (2×4)</string>
+    <string name="widget_category_count_description">Widget redimensionable 2×4 de demostración preparado para recuento ordenado de mayor a menor.</string>
+    <string name="widget_header_title">Control Gastos</string>
+    <string name="widget_demo_badge">DEMO</string>
+    <string name="widget_subtitle_default">Recuento demo · Mayor a menor</string>
+    <string name="widget_btn_open_app">Abrir</string>
+    <string name="widget_btn_demo_increment">+1</string>
+
+    <!-- Background Sync Notification Strings -->
+    <string name="sync_notification_channel_name">Sincronización con Google Sheets</string>
+    <string name="sync_notification_title">Sincronizando finanzas</string>
+    <string name="sync_notification_text">Subiendo o descargando cambios con Google Sheets…</string>
 </resources>

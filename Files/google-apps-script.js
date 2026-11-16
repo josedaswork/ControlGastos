@@ -1,7 +1,8 @@
 /**
  * ============================================================
- *  Google Apps Script — Backend para Control Gastos App (v4.0.2)
- *  Versión Ultra-Optimizada: Alto rendimiento, menor tamaño,
+ *  Google Apps Script — Backend para Control Gastos App (v4.1.0)
+ *  Sincronización Segura en Segundo Plano: LockService anti-carrera,
+ *  Idempotencia persistente por mutationId, Resultados por tarea en Lote,
  *  Sincronización Total en 1 llamada (Full Sync), Local-First y Checkboxes.
  *
  *  LÍMITE DE LECTURA: Gastos Fijos admite 20 filas, Ingresos 10 filas
@@ -66,6 +67,157 @@ var FIXED_DEFAULT_AMOUNTS = {
   21: 0
 };
 
+var SCRIPT_VERSION = '4.1.0';
+var IDEM_INDEX_KEY = 'CG_IDEM_KEYS_V1';
+var IDEM_PREFIX = 'IDEM_';
+var MAX_IDEM_KEYS = 140;
+
+var SCRIPT_CAPABILITIES = {
+  taskIds: true,
+  idempotency: true,
+  taskStatusQuery: true,
+  partialBatch: true,
+  scriptLock: true
+};
+
+/* ---- Control de Concurrencia e Idempotencia ---- */
+
+function sanitizeIdemKey(rawKey) {
+  if (!rawKey) return '';
+  return String(rawKey).replace(/[^a-zA-Z0-9_\-:.]/g, '_').slice(0, 80);
+}
+
+function getIdempotencyRecord(mutationId) {
+  var safe = sanitizeIdemKey(mutationId);
+  if (!safe) return null;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var raw = props.getProperty(IDEM_PREFIX + safe);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveIdempotencyRecord(mutationId, meta) {
+  var safe = sanitizeIdemKey(mutationId);
+  if (!safe) return;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var record = {
+      status: 'applied',
+      row: meta && meta.row ? meta.row : null,
+      action: meta && meta.action ? meta.action : '',
+      month: meta && meta.month ? meta.month : '',
+      ts: Date.now()
+    };
+    props.setProperty(IDEM_PREFIX + safe, JSON.stringify(record));
+
+    var keys = [];
+    var rawIdx = props.getProperty(IDEM_INDEX_KEY);
+    if (rawIdx) {
+      try {
+        var parsed = JSON.parse(rawIdx);
+        if (Array.isArray(parsed)) keys = parsed;
+      } catch (_) {}
+    }
+
+    var existingPos = keys.indexOf(safe);
+    if (existingPos !== -1) keys.splice(existingPos, 1);
+    keys.push(safe);
+
+    while (keys.length > MAX_IDEM_KEYS) {
+      var oldest = keys.shift();
+      if (oldest) {
+        try {
+          props.deleteProperty(IDEM_PREFIX + oldest);
+        } catch (_) {}
+      }
+    }
+
+    props.setProperty(IDEM_INDEX_KEY, JSON.stringify(keys));
+  } catch (_) {}
+}
+
+function withScriptLock(fn) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) {
+    return {
+      error: 'El servidor está procesando otra sincronización. Reintenta en unos segundos.',
+      code: 'LOCK_TIMEOUT'
+    };
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      lock.releaseLock();
+    } catch (_) {}
+  }
+}
+
+function executeIdempotentMutation(mutationId, action, month, fn) {
+  var cleanId = sanitizeIdemKey(mutationId);
+  if (cleanId) {
+    var prev = getIdempotencyRecord(cleanId);
+    if (prev && prev.status === 'applied') {
+      return {
+        success: true,
+        duplicate: true,
+        status: 'duplicate',
+        mutationId: cleanId,
+        row: prev.row || null,
+        version: SCRIPT_VERSION,
+        capabilities: SCRIPT_CAPABILITIES
+      };
+    }
+  }
+
+  var res = fn();
+  if (!res || res.error) {
+    return res || { error: 'Error desconocido en mutación' };
+  }
+
+  SpreadsheetApp.flush();
+
+  if (cleanId) {
+    saveIdempotencyRecord(cleanId, {
+      row: res.row || null,
+      action: action,
+      month: month
+    });
+    res.mutationId = cleanId;
+  }
+  res.status = 'applied';
+  return res;
+}
+
+function getTaskStatuses(mutationIds) {
+  var ids = Array.isArray(mutationIds) ? mutationIds : [];
+  var statuses = {};
+  for (var i = 0; i < ids.length; i++) {
+    var rawId = ids[i];
+    if (!rawId) continue;
+    var rec = getIdempotencyRecord(rawId);
+    if (rec && rec.status === 'applied') {
+      statuses[String(rawId)] = {
+        status: 'applied',
+        row: rec.row || null,
+        ts: rec.ts || null
+      };
+    } else {
+      statuses[String(rawId)] = { status: 'unknown' };
+    }
+  }
+  return {
+    success: true,
+    version: SCRIPT_VERSION,
+    capabilities: SCRIPT_CAPABILITIES,
+    statuses: statuses
+  };
+}
+
 /* ---- Router Unificado (GET y POST) ---- */
 
 function doGet(e) {
@@ -101,6 +253,7 @@ function handleRequest(e, isPost) {
   }
 
   var action = params.action || 'ping';
+  var mutationId = params.mutationId || params.taskId || '';
   var result = {};
 
   try {
@@ -109,13 +262,28 @@ function handleRequest(e, isPost) {
       case 'getSpreadsheetInfo':
         result = {
           status: 'ok',
-          version: '4.0.2',
+          version: SCRIPT_VERSION,
+          capabilities: SCRIPT_CAPABILITIES,
           maxCells: MAX_CELLS,
           maxVariableRows: MAX_VARIABLE_ROWS,
           spreadsheetUrl: ss.getUrl(),
           spreadsheetName: ss.getName(),
           timestamp: new Date().toISOString()
         };
+        break;
+
+      case 'getTaskStatuses':
+        result = withScriptLock(function() {
+          var qIds = [];
+          try {
+            qIds = typeof params.mutationIds === 'string'
+              ? JSON.parse(params.mutationIds)
+              : (params.mutationIds || []);
+          } catch (_) {
+            qIds = [];
+          }
+          return getTaskStatuses(qIds);
+        });
         break;
 
       case 'getFullSyncData':
@@ -155,43 +323,73 @@ function handleRequest(e, isPost) {
         } catch (_) {
           batchTasks = [];
         }
-        result = pushBatchChanges(ss, batchTasks);
+        result = withScriptLock(function() {
+          return pushBatchChanges(ss, batchTasks, params.batchId || null);
+        });
         break;
 
       case 'addExpense':
-        result = addExpense(ss, params.month, params.category, parseFloat(String(params.amount).replace(',', '.')));
+        result = withScriptLock(function() {
+          return executeIdempotentMutation(mutationId, 'addExpense', params.month, function() {
+            return addExpense(ss, params.month, params.category, parseFloat(String(params.amount).replace(',', '.')));
+          });
+        });
         break;
 
       case 'updateExpense':
-        result = updateExpense(
-          ss,
-          params.month,
-          parseInt(params.row, 10),
-          params.oldCategory,
-          parseFloat(String(params.oldAmount).replace(',', '.')),
-          params.newCategory,
-          parseFloat(String(params.newAmount).replace(',', '.'))
-        );
+        result = withScriptLock(function() {
+          return executeIdempotentMutation(mutationId, 'updateExpense', params.month, function() {
+            return updateExpense(
+              ss,
+              params.month,
+              parseInt(params.row, 10),
+              params.oldCategory,
+              parseFloat(String(params.oldAmount).replace(',', '.')),
+              params.newCategory,
+              parseFloat(String(params.newAmount).replace(',', '.'))
+            );
+          });
+        });
         break;
 
       case 'deleteExpense':
-        result = deleteExpense(ss, params.month, parseInt(params.row, 10), params.category, parseFloat(String(params.amount).replace(',', '.')));
+        result = withScriptLock(function() {
+          return executeIdempotentMutation(mutationId, 'deleteExpense', params.month, function() {
+            return deleteExpense(ss, params.month, parseInt(params.row, 10), params.category, parseFloat(String(params.amount).replace(',', '.')));
+          });
+        });
         break;
 
       case 'addIncome':
-        result = addIncome(ss, params.month, params.category, parseFloat(String(params.amount).replace(',', '.')));
+        result = withScriptLock(function() {
+          return executeIdempotentMutation(mutationId, 'addIncome', params.month, function() {
+            return addIncome(ss, params.month, params.category, parseFloat(String(params.amount).replace(',', '.')));
+          });
+        });
         break;
 
       case 'setTotalIncome':
-        result = setTotalIncome(ss, params.month, parseFloat(String(params.amount).replace(',', '.')), params.category);
+        result = withScriptLock(function() {
+          return executeIdempotentMutation(mutationId, 'setTotalIncome', params.month, function() {
+            return setTotalIncome(ss, params.month, parseFloat(String(params.amount).replace(',', '.')), params.category);
+          });
+        });
         break;
 
       case 'setSavingsGoal':
-        result = setSavingsGoal(ss, params.month, parseFloat(String(params.amount).replace(',', '.')));
+        result = withScriptLock(function() {
+          return executeIdempotentMutation(mutationId, 'setSavingsGoal', params.month, function() {
+            return setSavingsGoal(ss, params.month, parseFloat(String(params.amount).replace(',', '.')));
+          });
+        });
         break;
 
       case 'setMonthFinalized':
-        result = setMonthFinalized(ss, params.month, params.finalized === true || params.finalized === 'true' || params.finalized === '1');
+        result = withScriptLock(function() {
+          return executeIdempotentMutation(mutationId, 'setMonthFinalized', params.month, function() {
+            return setMonthFinalized(ss, params.month, params.finalized === true || params.finalized === 'true' || params.finalized === '1');
+          });
+        });
         break;
 
       case 'getMonthFinalizedStatuses':
@@ -200,22 +398,30 @@ function handleRequest(e, isPost) {
 
       case 'setFixedExpenseStatus':
       case 'toggleFixedExpense':
-        result = setFixedExpenseStatus(
-          ss,
-          params.month,
-          parseInt(params.row, 10),
-          params.active === true || params.active === 'true' || params.active === 1 || params.active === '1'
-        );
+        result = withScriptLock(function() {
+          return executeIdempotentMutation(mutationId, 'setFixedExpenseStatus', params.month, function() {
+            return setFixedExpenseStatus(
+              ss,
+              params.month,
+              parseInt(params.row, 10),
+              params.active === true || params.active === 'true' || params.active === 1 || params.active === '1'
+            );
+          });
+        });
         break;
 
       case 'setFixedExpenseAmount':
-        result = setFixedExpenseAmount(
-          ss,
-          params.month,
-          parseInt(params.row, 10),
-          parseFloat(String(params.amount || params.newAmount).replace(',', '.')),
-          params.category || params.newCategory
-        );
+        result = withScriptLock(function() {
+          return executeIdempotentMutation(mutationId, 'setFixedExpenseAmount', params.month, function() {
+            return setFixedExpenseAmount(
+              ss,
+              params.month,
+              parseInt(params.row, 10),
+              parseFloat(String(params.amount || params.newAmount).replace(',', '.')),
+              params.category || params.newCategory
+            );
+          });
+        });
         break;
 
       case 'setFixedExpensesBatch':
@@ -223,11 +429,24 @@ function handleRequest(e, isPost) {
         try {
           bUpdates = typeof params.updates === 'string' ? JSON.parse(params.updates) : (params.updates || []);
         } catch (_) {}
-        result = setFixedExpensesBatch(ss, params.month, bUpdates);
+        result = withScriptLock(function() {
+          return executeIdempotentMutation(mutationId, 'setFixedExpensesBatch', params.month, function() {
+            return setFixedExpensesBatch(ss, params.month, bUpdates);
+          });
+        });
         break;
 
       case 'repairFixedExpenseFormulas':
-        result = repairFixedExpenseFormulas(ss, params.month, params.forceAll === 'true' || params.forceAll === true);
+        result = withScriptLock(function() {
+          return repairFixedExpenseFormulas(ss, params.month, params.forceAll === 'true' || params.forceAll === true);
+        });
+        break;
+
+      case 'setLocaleSpain':
+        result = withScriptLock(function() {
+          ss.setSpreadsheetLocale('es_ES');
+          return { success: true, locale: 'es_ES' };
+        });
         break;
 
       default:
@@ -802,59 +1021,154 @@ function getCategories(ss) {
  *  SINCRONIZACIÓN EN LOTE (PUSH BATCH CHANGES)
  * ================================================================ */
 
-function pushBatchChanges(ss, tasks) {
+function executeBatchTask(ss, action, month, p) {
+  if (action === 'addExpense') {
+    return addExpense(ss, month, p.category, parseFloat(String(p.amount).replace(',', '.')));
+  } else if (action === 'updateExpense') {
+    return updateExpense(ss, month, parseInt(p.row, 10), p.oldCategory, parseFloat(String(p.oldAmount).replace(',', '.')), p.newCategory, parseFloat(String(p.newAmount).replace(',', '.')));
+  } else if (action === 'deleteExpense') {
+    return deleteExpense(ss, month, parseInt(p.row, 10), p.category, parseFloat(String(p.amount).replace(',', '.')));
+  } else if (action === 'setFixedExpenseStatus') {
+    return setFixedExpenseStatus(ss, month, parseInt(p.row, 10), p.active === true || p.active === 'true' || p.active === 1 || p.active === '1');
+  } else if (action === 'setFixedExpenseAmount') {
+    return setFixedExpenseAmount(ss, month, parseInt(p.row, 10), parseFloat(String(p.amount).replace(',', '.')), p.category);
+  } else if (action === 'addIncome') {
+    return addIncome(ss, month, p.category, parseFloat(String(p.amount).replace(',', '.')));
+  } else if (action === 'setTotalIncome') {
+    return setTotalIncome(ss, month, parseFloat(String(p.amount).replace(',', '.')), p.category);
+  } else if (action === 'setSavingsGoal') {
+    return setSavingsGoal(ss, month, parseFloat(String(p.amount).replace(',', '.')));
+  } else if (action === 'setMonthFinalized') {
+    return setMonthFinalized(ss, month, p.finalized === true || p.finalized === 'true' || p.finalized === '1');
+  }
+  return { error: 'Acción de lote desconocida: ' + action };
+}
+
+function pushBatchChanges(ss, tasks, batchId) {
   if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
-    return { success: true, processed: 0, message: 'No hay cambios para subir' };
+    return {
+      success: true,
+      partial: false,
+      version: SCRIPT_VERSION,
+      capabilities: SCRIPT_CAPABILITIES,
+      batchId: batchId || null,
+      processed: 0,
+      appliedCount: 0,
+      duplicateCount: 0,
+      failedCount: 0,
+      total: 0,
+      results: [],
+      monthsAffected: [],
+      message: 'No hay cambios para subir'
+    };
   }
 
   var monthsAffected = {};
-  var processed = 0;
+  var results = [];
+  var appliedCount = 0;
+  var duplicateCount = 0;
+  var failedCount = 0;
 
   for (var i = 0; i < tasks.length; i++) {
     var t = tasks[i] || {};
+    var taskId = t.id != null ? String(t.id) : null;
+    var mutationId = sanitizeIdemKey(t.mutationId || t.taskId || t.id);
     var action = t.action;
     var month = t.month;
     var p = t.payload || t;
-    if (month) monthsAffected[month] = true;
+
+    if (mutationId) {
+      var prev = getIdempotencyRecord(mutationId);
+      if (prev && prev.status === 'applied') {
+        duplicateCount++;
+        if (month) monthsAffected[month] = true;
+        results.push({
+          id: taskId,
+          mutationId: mutationId,
+          action: action,
+          month: month,
+          status: 'duplicate',
+          row: prev.row || null
+        });
+        continue;
+      }
+    }
 
     try {
-      if (action === 'addExpense') {
-        addExpense(ss, month, p.category, parseFloat(String(p.amount).replace(',', '.')));
-        processed++;
-      } else if (action === 'updateExpense') {
-        updateExpense(ss, month, parseInt(p.row, 10), p.oldCategory, parseFloat(String(p.oldAmount).replace(',', '.')), p.newCategory, parseFloat(String(p.newAmount).replace(',', '.')));
-        processed++;
-      } else if (action === 'deleteExpense') {
-        deleteExpense(ss, month, parseInt(p.row, 10), p.category, parseFloat(String(p.amount).replace(',', '.')));
-        processed++;
-      } else if (action === 'setFixedExpenseStatus') {
-        setFixedExpenseStatus(ss, month, parseInt(p.row, 10), p.active === true || p.active === 'true' || p.active === 1 || p.active === '1');
-        processed++;
-      } else if (action === 'setFixedExpenseAmount') {
-        setFixedExpenseAmount(ss, month, parseInt(p.row, 10), parseFloat(String(p.amount).replace(',', '.')), p.category);
-        processed++;
-      } else if (action === 'addIncome') {
-        addIncome(ss, month, p.category, parseFloat(String(p.amount).replace(',', '.')));
-        processed++;
-      } else if (action === 'setTotalIncome') {
-        setTotalIncome(ss, month, parseFloat(String(p.amount).replace(',', '.')), p.category);
-        processed++;
-      } else if (action === 'setSavingsGoal') {
-        setSavingsGoal(ss, month, parseFloat(String(p.amount).replace(',', '.')));
-        processed++;
-      } else if (action === 'setMonthFinalized') {
-        setMonthFinalized(ss, month, p.finalized === true || p.finalized === 'true' || p.finalized === '1');
-        processed++;
+      var opRes = executeBatchTask(ss, action, month, p);
+      if (opRes && opRes.error) {
+        failedCount++;
+        results.push({
+          id: taskId,
+          mutationId: mutationId || null,
+          action: action,
+          month: month,
+          status: 'failed',
+          error: opRes.error
+        });
+      } else {
+        SpreadsheetApp.flush();
+        if (mutationId) {
+          saveIdempotencyRecord(mutationId, {
+            row: opRes && opRes.row ? opRes.row : null,
+            action: action,
+            month: month
+          });
+        }
+        appliedCount++;
+        if (month) monthsAffected[month] = true;
+        results.push({
+          id: taskId,
+          mutationId: mutationId || null,
+          action: action,
+          month: month,
+          status: 'applied',
+          row: opRes && opRes.row ? opRes.row : null
+        });
       }
-    } catch (_) {}
+    } catch (taskErr) {
+      failedCount++;
+      results.push({
+        id: taskId,
+        mutationId: mutationId || null,
+        action: action,
+        month: month,
+        status: 'failed',
+        error: taskErr && taskErr.message ? taskErr.message : String(taskErr)
+      });
+    }
   }
 
-  SpreadsheetApp.flush();
+  var affectedKeys = Object.keys(monthsAffected);
+  var monthsData = {};
+  if (affectedKeys.length > 0 && affectedKeys.length <= 3) {
+    for (var mIdx = 0; mIdx < affectedKeys.length; mIdx++) {
+      var mKey = affectedKeys[mIdx];
+      try {
+        var mSnapshot = getMonthData(ss, mKey);
+        if (mSnapshot && !mSnapshot.error) {
+          monthsData[mSnapshot.month || mKey] = mSnapshot;
+        }
+      } catch (_) {}
+    }
+  }
+
+  var totalConfirmed = appliedCount + duplicateCount;
 
   return {
-    success: true,
-    processed: processed,
-    monthsAffected: Object.keys(monthsAffected)
+    success: failedCount === 0,
+    partial: failedCount > 0 && totalConfirmed > 0,
+    version: SCRIPT_VERSION,
+    capabilities: SCRIPT_CAPABILITIES,
+    batchId: batchId || null,
+    processed: totalConfirmed,
+    appliedCount: appliedCount,
+    duplicateCount: duplicateCount,
+    failedCount: failedCount,
+    total: tasks.length,
+    results: results,
+    monthsAffected: affectedKeys,
+    monthsData: monthsData
   };
 }
 
