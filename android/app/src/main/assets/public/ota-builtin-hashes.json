@@ -1,0 +1,56 @@
+{
+  "files": {
+    "assets/aistudio/.gitignore": {
+      "sha256": "cdbcae15105d6b781e620813c79c7e868740d4e9cc53ce6f5fcbbc12387adf4b",
+      "size": 2
+    },
+    "assets/index-B7d0cn36.js": {
+      "sha256": "4e3bdbbdd6f3007bc208829cd7032fed57c6c5f7e7af5b8fca38607471f9c64a",
+      "size": 1073845
+    },
+    "assets/index-BXw6UINy.css": {
+      "sha256": "9aafeb0b17636c8110b6f4d9728133f487877bb8e62ca20c1280981c82d25c69",
+      "size": 112162
+    },
+    "assets/web-B0qqFxLP.js": {
+      "sha256": "ee68f1eaebc6f42c8497b92d9a7ba7d4d40f55928a4f336b581311e1db24a354",
+      "size": 940
+    },
+    "assets/web-D1iq0hI1.js": {
+      "sha256": "25f868fa501a4aad9cc57e8f098458e1e085c70561634790c1d1e04e910ad13f",
+      "size": 842
+    },
+    "cordova.js": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "cordova_plugins.js": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "favicon.png": {
+      "sha256": "3cb5aab7fcb5650a33a7c8407707569440d7408d76a745c4a0adb4487720fa4a",
+      "size": 6383
+    },
+    "icon-192.png": {
+      "sha256": "d53f7382a9a249f81b98e2ff99218627da057ae022d1d4b922cf3b4c68df9d92",
+      "size": 47090
+    },
+    "icon-512.png": {
+      "sha256": "b9b2e0ca5288a92fea72d5cf45590e5e995f89ce69749f5d1c49764f3e486504",
+      "size": 296479
+    },
+    "icon.png": {
+      "sha256": "7e2d1d682dc7555af782b229418a7f8f3efe4db18e87805864ce9a6450bf9c06",
+      "size": 296479
+    },
+    "icon.svg": {
+      "sha256": "635f85323762a2952ffda12f14dae5602e152a4c6fd12ddc9fc54b9c518de482",
+      "size": 1032
+    },
+    "index.html": {
+      "sha256": "cbd6599b637636305a2007ff423eb62707532ab567665604436a510b9247f46a",
+      "size": 2387
+    }
+  }
+}

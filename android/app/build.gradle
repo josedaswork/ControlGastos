@@ -1,5 +1,15 @@
 apply plugin: 'com.android.application'
 
+def releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH") ?: findProperty("RELEASE_STORE_FILE")
+def releaseKeystoreFile = releaseKeystorePath ? file(releaseKeystorePath.toString()) : null
+def releaseStorePassword = System.getenv("KEYSTORE_PASSWORD") ?: findProperty("RELEASE_STORE_PASSWORD")
+def releaseKeyAlias = System.getenv("KEY_ALIAS") ?: findProperty("RELEASE_KEY_ALIAS")
+def releaseKeyPassword = System.getenv("KEY_PASSWORD") ?: findProperty("RELEASE_KEY_PASSWORD")
+def hasReleaseSigning = releaseKeystoreFile != null && releaseKeystoreFile.exists() && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
+
+def appVersionName = (findProperty("APP_VERSION_NAME") ?: System.getenv("APP_VERSION_NAME") ?: "1.0.0").toString()
+def appVersionCode = ((findProperty("APP_VERSION_CODE") ?: System.getenv("APP_VERSION_CODE") ?: "1").toString()).toInteger()
+
 android {
     namespace = "com.controlgastos.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +17,8 @@ android {
         applicationId "com.controlgastos.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode appVersionCode
+        versionName appVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +26,21 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile releaseKeystoreFile
+                storePassword releaseStorePassword.toString()
+                keyAlias releaseKeyAlias.toString()
+                keyPassword releaseKeyPassword.toString()
+            }
+        }
+    }
     buildTypes {
         release {
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

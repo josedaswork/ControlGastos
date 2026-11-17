@@ -61,15 +61,31 @@ jobs:
           which convert || (sudo apt-get update && sudo apt-get install -y imagemagick)
           python3 scripts/generate_assets.py
 
-      - name: Build debug APK
+      - name: Build APK (Release signed with fallback to Debug)
         working-directory: android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleDebug --no-daemon
+          mkdir -p ../apk-output
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/release-keystore.jks"
+            printf '%s' "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+            ./gradlew assembleRelease --no-daemon
+            cp app/build/outputs/apk/release/*.apk ../apk-output/
+            rm -f "$ANDROID_KEYSTORE_PATH"
+          else
+            echo "::warning::Secrets de firma no configurados. Compilando APK debug como fallback."
+            ./gradlew assembleDebug --no-daemon
+            cp app/build/outputs/apk/debug/*.apk ../apk-output/
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: control-gastos-debug
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: control-gastos-apk
+          path: apk-output/*.apk
 

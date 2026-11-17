@@ -20,6 +20,8 @@ import {
   Sun,
   Moon,
   Monitor,
+  RefreshCw,
+  Sparkles,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
@@ -41,6 +43,7 @@ import {
   clearLogs,
 } from '../lib/debugLogger'
 import DebugLogViewer from './DebugLogViewer'
+import { getCurrentOtaInfo, checkForOtaUpdate } from '../lib/otaUpdater'
 import { toast } from 'sonner'
 
 export default function SetupScreen({ onSave, onClose, initialUrl }) {
@@ -53,6 +56,25 @@ export default function SetupScreen({ onSave, onClose, initialUrl }) {
   const [debugMode, setDebugMode] = useState(() => isDebugEnabled())
   const [logs, setLogs] = useState([])
   const [showLogViewer, setShowLogViewer] = useState(false)
+  const [otaInfo, setOtaInfo] = useState({
+    version: '1.0.0',
+    nativeVersion: '1.0.0',
+    bundleId: 'builtin',
+    isOtaActive: false,
+    isNative: false,
+  })
+  const [checkingOta, setCheckingOta] = useState(false)
+  const [otaCheckMessage, setOtaCheckMessage] = useState('')
+
+  useEffect(() => {
+    let active = true
+    getCurrentOtaInfo().then((info) => {
+      if (active && info) setOtaInfo(info)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
 
   useEffect(() => {
     const unsub = subscribeLogs((currentLogs) => {
@@ -60,6 +82,32 @@ export default function SetupScreen({ onSave, onClose, initialUrl }) {
     })
     return () => unsub()
   }, [])
+
+  const handleCheckOtaUpdates = async () => {
+    if (checkingOta) return
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
+    setCheckingOta(true)
+    setOtaCheckMessage('')
+    try {
+      const result = await checkForOtaUpdate({ manual: true })
+      const refreshed = await getCurrentOtaInfo()
+      if (refreshed) setOtaInfo(refreshed)
+
+      if (result?.status === 'up_to_date') {
+        setOtaCheckMessage(`Actualizada: tienes la última versión (v${result.currentVersion}).`)
+      } else if (result?.status === 'available_web_only') {
+        setOtaCheckMessage(
+          `Disponible v${result.remoteVersion} en GitHub Releases (OTA automático solo en Android).`
+        )
+      } else if (result?.status === 'offline') {
+        setOtaCheckMessage('Sin conexión a internet.')
+      } else if (result?.status === 'error') {
+        setOtaCheckMessage(result.error || 'No se pudo comprobar actualizaciones.')
+      }
+    } finally {
+      setCheckingOta(false)
+    }
+  }
 
   const handleToggleDebug = () => {
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {})
@@ -459,6 +507,55 @@ export default function SetupScreen({ onSave, onClose, initialUrl }) {
                 </div>
               </motion.div>
             )}
+          </div>
+
+          {/* Actualizaciones OTA */}
+          <div className="mt-3.5 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800 text-xs text-slate-700 dark:text-slate-300 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-7 h-7 rounded-xl bg-blue-100 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="font-bold text-slate-800 dark:text-slate-100 truncate">
+                    Actualizaciones (OTA)
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Versión actual:{' '}
+                    <strong className="text-slate-800 dark:text-slate-200">
+                      v{otaInfo.version}
+                    </strong>
+                  </p>
+                </div>
+              </div>
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 border ${
+                  otaInfo.isOtaActive
+                    ? 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800/70'
+                    : 'bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300/70 dark:border-slate-700'
+                }`}
+              >
+                {otaInfo.isOtaActive ? 'Bundle OTA' : 'Integrada'}
+              </span>
+            </div>
+
+            {otaCheckMessage && (
+              <p className="text-[11px] text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-200/70 dark:border-slate-800 leading-snug">
+                {otaCheckMessage}
+              </p>
+            )}
+
+            <button
+              type="button"
+              disabled={checkingOta}
+              onClick={handleCheckOtaUpdates}
+              className="w-full py-2 px-3 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-100 font-semibold text-xs border border-slate-200/90 dark:border-slate-700 shadow-2xs transition-colors disabled:opacity-60 flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 text-primary ${checkingOta ? 'animate-spin' : ''}`}
+              />
+              {checkingOta ? 'Buscando actualizaciones…' : 'Buscar actualizaciones'}
+            </button>
           </div>
 
           {pendingCount > 0 && (

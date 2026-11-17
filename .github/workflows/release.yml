@@ -1,0 +1,139 @@
+name: Release OTA & Signed APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versión opcional (ej: 1.0.1). Si se deja vacía usa package.json'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Android SDK
+        run: |
+          ANDROID_SDK_PATH="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$ANDROID_SDK_PATH" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_PATH" >> $GITHUB_ENV
+          echo "$ANDROID_SDK_PATH/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_PATH/platform-tools" >> $GITHUB_PATH
+          export PATH="$ANDROID_SDK_PATH/cmdline-tools/latest/bin:$ANDROID_SDK_PATH/platform-tools:$PATH"
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" || true
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve release version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            RAW_VER="${GITHUB_REF_NAME#v}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            RAW_VER="${{ inputs.version }}"
+            RAW_VER="${RAW_VER#v}"
+          else
+            RAW_VER="$(node -p "require('./package.json').version")"
+          fi
+
+          VERSION="$(printf '%s' "$RAW_VER" | tr -d '\r\n')"
+          VERSION_CODE="$(node -e "
+            const clean = process.argv[1].split('-')[0];
+            const parts = clean.split('.').map(n => parseInt(n, 10) || 0);
+            const code = (parts[0] || 0) * 10000 + (parts[1] || 0) * 100 + (parts[2] || 0);
+            console.log(code > 0 ? code : ${GITHUB_RUN_NUMBER:-1});
+          " "$VERSION")"
+
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
+          echo "VITE_APP_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Resolved release v$VERSION (versionCode=$VERSION_CODE)"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Package OTA bundle.zip and update.json
+        run: |
+          which zip >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y zip unzip)
+          mkdir -p release-assets
+          (cd dist && zip -r ../release-assets/bundle.zip .)
+          unzip -l release-assets/bundle.zip | grep -qE '[[:space:]]index\.html$'
+
+          node -e "
+            const fs = require('fs');
+            const manifest = {
+              version: process.env.VERSION,
+              url: 'https://github.com/josedaswork/ControlGastos/releases/latest/download/bundle.zip',
+              notes: 'Actualización v' + process.env.VERSION
+            };
+            fs.writeFileSync('release-assets/update.json', JSON.stringify(manifest, null, 2) + '\n');
+          "
+          cat release-assets/update.json
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
+
+      - name: Generate Android icons and splash
+        run: |
+          which convert >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y imagemagick)
+          python3 scripts/generate_assets.py
+
+      - name: Build Android APK (Release signed with fallback to Debug)
+        working-directory: android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          chmod +x ./gradlew
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/release-keystore.jks"
+            printf '%s' "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+            ./gradlew assembleRelease -PAPP_VERSION_NAME="$VERSION" -PAPP_VERSION_CODE="$VERSION_CODE" --no-daemon
+            APK_SRC="$(ls app/build/outputs/apk/release/*.apk | head -n 1)"
+            cp "$APK_SRC" "../release-assets/ControlGastos-v${VERSION}.apk"
+            rm -f "$ANDROID_KEYSTORE_PATH"
+          else
+            echo "::warning::Secrets de firma no configurados (KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD). Compilando APK debug como fallback."
+            ./gradlew assembleDebug -PAPP_VERSION_NAME="$VERSION" -PAPP_VERSION_CODE="$VERSION_CODE" --no-daemon
+            APK_SRC="$(ls app/build/outputs/apk/debug/*.apk | head -n 1)"
+            cp "$APK_SRC" "../release-assets/ControlGastos-v${VERSION}-debug.apk"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', env.VERSION) }}
+          name: Control Gastos v${{ env.VERSION }}
+          generate_release_notes: true
+          files: |
+            release-assets/bundle.zip
+            release-assets/update.json
+            release-assets/*.apk

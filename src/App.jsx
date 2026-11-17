@@ -65,6 +65,7 @@ import {
 } from '@/lib/syncManager'
 import { isNativeBackgroundSyncAvailable } from '@/lib/backgroundSyncPlugin'
 import { isDebugEnabled, subscribeLogs } from '@/lib/debugLogger'
+import { notifyOtaAppReady, checkForOtaUpdate } from '@/lib/otaUpdater'
 import MonthSelector from '@/components/MonthSelector'
 import MonthlySummary from '@/components/MonthlySummary'
 import ExpenseList from '@/components/ExpenseList'
@@ -191,6 +192,11 @@ function App() {
       },
     })
     return () => cleanup?.()
+  }, [])
+
+  useEffect(() => {
+    notifyOtaAppReady()
+    checkForOtaUpdate({ manual: false })
   }, [])
 
   useEffect(() => {

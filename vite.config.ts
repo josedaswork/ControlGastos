@@ -1,11 +1,22 @@
+import fs from 'fs';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
+  let pkgVersion = '1.0.0';
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'));
+    if (pkg?.version) pkgVersion = String(pkg.version);
+  } catch (_) {}
+  const appVersion = process.env.VITE_APP_VERSION || pkgVersion;
+
   return {
     plugins: [react(), tailwindcss()],
+    define: {
+      'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersion),
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
