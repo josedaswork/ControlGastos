@@ -7,7 +7,7 @@
 
     <!-- Native Home Screen Widget Strings -->
     <string name="widget_category_count_name">Resumen Categorías (2×4)</string>
-    <string name="widget_category_count_description">Widget redimensionable 2×4 de demostración preparado para recuento ordenado de mayor a menor.</string>
+    <string name="widget_category_count_description">Número de gastos por categoría del mes en curso, de mayor a menor.</string>
     <string name="widget_header_title">Control Gastos</string>
     <string name="widget_demo_badge">DEMO</string>
     <string name="widget_subtitle_default">Recuento demo · Mayor a menor</string>

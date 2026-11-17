@@ -6,13 +6,21 @@ import android.appwidget.AppWidgetProvider;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.RemoteViews;
 
 import com.controlgastos.app.R;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * AppWidgetProvider base para el widget 2×4 redimensionable de Control Gastos.
@@ -138,13 +146,32 @@ public class CategoryCountWidgetProvider extends AppWidgetProvider {
     ) {
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_category_count);
 
-        int tapCount = store.getDemoTapCount(appWidgetId);
         int cachedHeightDp = store.getCachedMinHeightDp(appWidgetId);
         int maxRows = WidgetDemoStore.resolveMaxVisibleRows(cachedHeightDp);
-        List<WidgetDemoStore.RankedEntry> entries = store.buildDemoEntries(tapCount);
 
-        views.setTextViewText(R.id.widget_subtitle, "Recuento demo · #" + appWidgetId);
-        views.setTextViewText(R.id.widget_counter_status, "Toques demo: " + tapCount);
+        SharedPreferences prefs = context.getApplicationContext()
+                .getSharedPreferences(WidgetConstants.PREFS_NAME, Context.MODE_PRIVATE);
+        String month = prefs.getString(WidgetConstants.KEY_CATEGORY_COUNTS_MONTH, "");
+        long updatedAt = prefs.getLong(WidgetConstants.KEY_CATEGORY_COUNTS_UPDATED_AT, 0L);
+        List<WidgetDemoStore.RankedEntry> entries = WidgetDemoStore.sortDescending(
+                parseEntries(prefs.getString(WidgetConstants.KEY_CATEGORY_COUNTS_JSON, "[]"))
+        );
+
+        views.setViewVisibility(R.id.widget_demo_badge, View.GONE);
+        views.setViewVisibility(R.id.widget_btn_demo_action, View.GONE);
+
+        if (month.isEmpty()) {
+            views.setTextViewText(R.id.widget_subtitle, "Abre la app para cargar datos");
+        } else {
+            views.setTextViewText(R.id.widget_subtitle, "Gastos por categoría · " + month);
+        }
+
+        if (updatedAt > 0) {
+            String time = new SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(new Date(updatedAt));
+            views.setTextViewText(R.id.widget_counter_status, "Actualizado " + time);
+        } else {
+            views.setTextViewText(R.id.widget_counter_status, "Sin datos");
+        }
 
         for (int i = 0; i < ROW_CONTAINER_IDS.length; i++) {
             if (i < maxRows && i < entries.size()) {
@@ -164,14 +191,24 @@ public class CategoryCountWidgetProvider extends AppWidgetProvider {
         views.setOnClickPendingIntent(R.id.widget_header, openAppIntent);
         views.setOnClickPendingIntent(R.id.widget_btn_open_app, openAppIntent);
 
-        PendingIntent demoIncrementIntent = WidgetIntentFactory.createWidgetActionPendingIntent(
-                context,
-                appWidgetId,
-                WidgetConstants.ACTION_DEMO_INCREMENT,
-                WidgetConstants.REQUEST_SLOT_DEMO_INCREMENT
-        );
-        views.setOnClickPendingIntent(R.id.widget_btn_demo_action, demoIncrementIntent);
-
         appWidgetManager.updateAppWidget(appWidgetId, views);
+    }
+
+    static List<WidgetDemoStore.RankedEntry> parseEntries(String json) {
+        List<WidgetDemoStore.RankedEntry> result = new ArrayList<>();
+        try {
+            JSONArray arr = new JSONArray(json);
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject obj = arr.optJSONObject(i);
+                if (obj == null) continue;
+                String label = obj.optString("label", "").trim();
+                int count = obj.optInt("count", 0);
+                if (!label.isEmpty() && count > 0) {
+                    result.add(new WidgetDemoStore.RankedEntry(label, count, i));
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return result;
     }
 }

@@ -27,6 +27,10 @@ public final class WidgetConstants {
     public static final String ACTION_REFRESH_ALL =
             "com.controlgastos.app.widget.ACTION_REFRESH_ALL";
 
+    public static final String KEY_CATEGORY_COUNTS_JSON = "category_counts_json";
+    public static final String KEY_CATEGORY_COUNTS_MONTH = "category_counts_month";
+    public static final String KEY_CATEGORY_COUNTS_UPDATED_AT = "category_counts_updated_at";
+
     /** Número máximo de filas visibles en el diseño base 2x4. */
     public static final int MAX_VISIBLE_ROWS = 5;
 

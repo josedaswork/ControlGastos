@@ -66,6 +66,7 @@ import {
 import { isNativeBackgroundSyncAvailable } from '@/lib/backgroundSyncPlugin'
 import { isDebugEnabled, subscribeLogs } from '@/lib/debugLogger'
 import { notifyOtaAppReady, checkForOtaUpdate } from '@/lib/otaUpdater'
+import { syncCategoryWidget } from '@/lib/widgetBridge'
 import MonthSelector from '@/components/MonthSelector'
 import MonthlySummary from '@/components/MonthlySummary'
 import ExpenseList from '@/components/ExpenseList'
@@ -210,6 +211,11 @@ function App() {
 
   const monthName = MONTHS[selectedMonth]
   monthNameRef.current = monthName
+
+  // El widget siempre refleja el mes en curso, aunque se esté viendo otro mes
+  useEffect(() => {
+    syncCategoryWidget(MONTHS[effectiveCurrentMonth])
+  }, [expenses, effectiveCurrentMonth])
 
   const applyDownloadedMonthStatus = (monthData) => {
     if (!monthData || typeof monthData.monthFinalized !== 'boolean') return
